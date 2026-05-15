@@ -1,58 +1,110 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Connect IT Laravel Migration
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+This directory is the in-progress Laravel 13 port of the Ticketing System.
 
-## About Laravel
+## Current state
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+The project is not yet a full Laravel replacement for the existing application.
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+What is already present:
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+- Laravel 13 application scaffold
+- MySQL-ready migrations for the main ITSM tables
+- Core ticket models, enums, services, events, and notification plumbing
+- Legacy API compatibility routes for:
+  - `/api/health`
+  - `/api/db-test`
+  - `/api/auth/login`
+  - `/api/users`
+  - `/api/tickets/*` core listing and activity endpoints
 
-## Learning Laravel
+What is not fully migrated yet:
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+- Frontend auth and ticket subscriptions still rely on Firebase/Firestore in `../src`
+- Timesheets, activity tracker, screenshot upload, AI work-session flows, and master-data APIs are still implemented in `../server.ts`
+- Frontend build integration into Laravel is not complete
+- No full regression suite exists yet to prove feature-for-feature parity with the existing app
 
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+## Why this matters
 
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
+The original app is a mixed stack:
 
-## Agentic Development
+- React + TypeScript frontend
+- Firebase Auth + Firestore in several frontend contexts
+- Express/Node API in `../server.ts`
+- A partial PHP/Laravel port in this folder
 
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
+Because of that, "convert everything without changing behavior" is a staged migration, not a safe single-file swap.
+
+## Immediate goal of this Laravel app
+
+1. Preserve the old `/api/...` contract so the frontend can keep working.
+2. Move business logic from Express/Firebase into Laravel service classes.
+3. Replace remaining Firebase reads/writes in the frontend with Laravel-backed APIs.
+4. Finish MySQL-only operation and remove backend dependence on `../server.ts`.
+
+## Run locally
+
+1. Create `.env` from `.env.example`
+2. Configure MySQL credentials
+3. Install dependencies:
 
 ```bash
-composer require laravel/boost --dev
-
-php artisan boost:install
+composer install
+npm install
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+4. Run migrations:
 
-## Contributing
+```bash
+php artisan migrate
+```
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+5. Start Laravel + Vite:
 
-## Code of Conduct
+```bash
+composer run dev
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+6. Enable public attachment URLs:
 
-## Security Vulnerabilities
+```bash
+php artisan storage:link
+```
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+## Email integration setup
 
-## License
+Configure the support mailbox in `.env`:
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+```env
+MAIL_MAILER=smtp
+MAIL_HOST=your-smtp-host
+MAIL_PORT=587
+MAIL_USERNAME=Support@technosprint.net
+MAIL_PASSWORD=your-password
+MAIL_FROM_ADDRESS=Support@technosprint.net
+MAIL_FROM_NAME="TechnoSprint Support"
+
+IMAP_HOST=your-imap-host
+IMAP_PORT=993
+IMAP_PROTOCOL=imap
+IMAP_ENCRYPTION=ssl
+IMAP_USERNAME=Support@technosprint.net
+IMAP_PASSWORD=your-password
+IMAP_SENT_FOLDER=Sent
+```
+
+The scheduler already runs `omnichannel:poll` every minute through `routes/console.php`.
+For background notification delivery, keep the queue worker running.
+```
+
+## Recommended next migration slices
+
+1. Replace frontend Firebase auth in `../src/pages/Login.tsx`, `../src/pages/Register.tsx`, and `../src/contexts/AuthContext.tsx`
+2. Replace Firestore ticket subscriptions in `../src/contexts/TicketsContext.tsx`
+3. Port timesheet and activity-tracker APIs from `../server.ts`
+4. Port screenshot upload and capture workflows
+5. Port master-data CRUD, reporting, AI, and omnichannel endpoints
+
+## Reference
+
+See [docs/laravel-migration-audit.md](docs/laravel-migration-audit.md) for the current gap analysis and endpoint inventory.

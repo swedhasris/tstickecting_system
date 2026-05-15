@@ -9,7 +9,7 @@ return [
             'protocol'  => env('IMAP_PROTOCOL', 'imap'),
             'encryption'    => env('IMAP_ENCRYPTION', 'ssl'),
             'validate_cert' => env('IMAP_VALIDATE_CERT', true),
-            'username' => env('IMAP_USERNAME', 'root@example.com'),
+            'username' => env('IMAP_USERNAME', 'Support@technosprint.net'),
             'password' => env('IMAP_PASSWORD', ''),
             'authentication' => env('IMAP_AUTHENTICATION', null),
             'proxy' => [

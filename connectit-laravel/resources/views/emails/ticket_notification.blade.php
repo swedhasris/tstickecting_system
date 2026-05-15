@@ -14,7 +14,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <h2>TechNova ITSM Support</h2>
+            <h2>TechnoSprint Support</h2>
         </div>
         <div class="content">
             <p>Hello,</p>
@@ -22,18 +22,20 @@
             
             <div class="ticket-info">
                 <strong>Subject:</strong> {{ $ticket->title }}<br>
-                <strong>Status:</strong> {{ $ticket->status }}<br>
-                <strong>Priority:</strong> {{ $ticket->priority }}<br>
+                <strong>Status:</strong> {{ $ticket->status->value ?? $ticket->status }}<br>
+                <strong>Priority:</strong> {{ $ticket->priority->value ?? $ticket->priority }}<br>
             </div>
 
             <p><strong>Message:</strong></p>
             <p>{{ $message_body }}</p>
 
+            <p>You can reply directly to this email from <strong>{{ config('services.support_mailbox.address') }}</strong> to add updates to your ticket.</p>
+
             <p><a href="{{ config('app.url') }}/tickets/{{ $ticket->id }}" class="btn">View Ticket Details</a></p>
         </div>
         <div class="footer">
-            <p>This is an automated message. Please do not reply directly to this email.</p>
-            <p>&copy; {{ date('Y') }} TechNova Solutions</p>
+            <p>This is an automated message from {{ config('services.support_mailbox.name') }}.</p>
+            <p>&copy; {{ date('Y') }} TechnoSprint</p>
         </div>
     </div>
 </body>

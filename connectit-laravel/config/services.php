@@ -45,4 +45,10 @@ return [
         'key' => env('GEMINI_API_KEY'),
     ],
 
+    'support_mailbox' => [
+        'address' => env('SUPPORT_MAILBOX_ADDRESS', env('MAIL_FROM_ADDRESS', 'Support@technosprint.net')),
+        'name' => env('SUPPORT_MAILBOX_NAME', 'TechnoSprint Support'),
+        'sent_folder' => env('IMAP_SENT_FOLDER', 'Sent'),
+    ],
+
 ];

@@ -5,7 +5,6 @@ import {
   Paperclip, Link2, Image, Mic, CheckSquare, Mail, Send, Phone,
   MessageCircle, ChevronRight, FileText, Copy, Printer, RefreshCw, Ticket
 } from "lucide-react";
-import { WorkNotesChat } from "../components/WorkNotesChat";
 import { useAuth } from "../contexts/AuthContext";
 import { db } from "../lib/firebase";
 import {
@@ -13,6 +12,7 @@ import {
   doc, serverTimestamp, orderBy, onSnapshot, onSnapshot as listenToDoc
 } from "firebase/firestore";
 import { Link, useParams, useNavigate } from "react-router-dom";
+import { createSpeechController } from "../lib/speechToEnglish";
 
 /* ─── constants ─── */
 const STATUS_COLORS: Record<string, string> = {
@@ -127,7 +127,17 @@ function Section({ title, icon, defaultOpen = true, headerRight, accentColor, ch
 }
 
 /* ─── Rich Text Toolbar ─── */
-function RichTextToolbar({ editorRef }: { editorRef: React.RefObject<HTMLDivElement | null> }) {
+function RichTextToolbar({ 
+  editorRef, 
+  onMicClick, 
+  isListening, 
+  isSupported 
+}: { 
+  editorRef: React.RefObject<HTMLDivElement | null>;
+  onMicClick?: () => void;
+  isListening?: boolean;
+  isSupported?: boolean;
+}) {
   const exec = (cmd: string, val?: string) => {
     document.execCommand(cmd, false, val);
     editorRef.current?.focus();
@@ -151,7 +161,15 @@ function RichTextToolbar({ editorRef }: { editorRef: React.RefObject<HTMLDivElem
         <option>Awaiting parts</option>
         <option>Escalated to vendor</option>
       </select>
-      <button type="button" className="p-1.5 hover:bg-muted rounded transition-colors ml-1" title="Dictation"><Mic className="w-4 h-4" /></button>
+      <button 
+        type="button" 
+        onClick={onMicClick}
+        disabled={isSupported === false}
+        className={`p-1.5 hover:bg-muted rounded transition-colors ml-1 border border-transparent ${isListening ? 'bg-sn-green/15 text-sn-green border-sn-green' : ''}`}
+        title={isListening ? "Stop Dictation" : "Dictation"}
+      >
+        <Mic className="w-4 h-4" />
+      </button>
     </div>
   );
 }
@@ -196,6 +214,44 @@ export function Timesheet() {
   const [notesContent, setNotesContent] = useState("");
   const [shortDescription, setShortDescription] = useState("");
   const editorRef = useRef<HTMLDivElement>(null);
+
+  // Speech to Text state
+  const [speechListening, setSpeechListening] = useState(false);
+  const [speechSupported, setSpeechSupported] = useState(true);
+  const [speechLiveText, setSpeechLiveText] = useState("");
+  const speechControllerRef = useRef<ReturnType<typeof createSpeechController> | null>(null);
+
+  useEffect(() => {
+    const controller = createSpeechController({
+      onInterim: (text) => {
+        setSpeechLiveText(text);
+      },
+      onFinal: (text) => {
+        setSpeechLiveText("");
+        if (editorRef.current && text) {
+          const currentHTML = editorRef.current.innerHTML || "";
+          const appendText = currentHTML.endsWith(">") || !currentHTML ? text : ` ${text}`;
+          editorRef.current.innerHTML = currentHTML + appendText;
+          setNotesContent(editorRef.current.innerHTML);
+          
+          // Trigger the onInput handler manually to update any dependent state
+          const event = new Event('input', { bubbles: true });
+          editorRef.current.dispatchEvent(event);
+        }
+      },
+      onStateChange: (listening) => {
+        setSpeechListening(listening);
+        if (!listening) setSpeechLiveText("");
+      },
+      onError: (msg) => {
+        setSpeechListening(false);
+        alert(msg);
+      }
+    });
+    speechControllerRef.current = controller;
+    setSpeechSupported(controller.supported);
+    return () => controller.stop();
+  }, []);
 
   // Email section
   const [emailFrom, setEmailFrom] = useState("");
@@ -791,7 +847,17 @@ export function Timesheet() {
                     data-placeholder="Enter notes..."
                     suppressContentEditableWarning
                   />
-                  <RichTextToolbar editorRef={editorRef} />
+                  <RichTextToolbar 
+                    editorRef={editorRef} 
+                    onMicClick={() => speechControllerRef.current?.toggle()}
+                    isListening={speechListening}
+                    isSupported={speechSupported}
+                  />
+                  {speechListening && (
+                    <div className="px-3 py-2 text-[10px] text-sn-green font-medium border-t border-border bg-white">
+                      Listening{speechLiveText ? `: ${speechLiveText}` : "..."}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -889,18 +955,6 @@ export function Timesheet() {
         </div>
       </Section>
 
-      {/* ═══ WORK NOTES (PRIVATE) CHAT STREAM ═══ */}
-      <WorkNotesChat
-        ticketNumber=""
-        ticketTitle=""
-        ticketId=""
-        onSessionStart={(sessionId, startTime) => {
-          console.log('[Timesheet] Work session started:', sessionId, startTime);
-        }}
-        onSessionStop={(sessionId, durationSeconds) => {
-          console.log('[Timesheet] Work session stopped:', sessionId, 'duration:', durationSeconds, 's');
-        }}
-      />
 
       {/* ═══ SEND NOTES AS EMAIL ═══ */}
       <Section title="Send Notes as Email" icon={<Mail className="w-4 h-4 text-blue-600" />} defaultOpen={false}>

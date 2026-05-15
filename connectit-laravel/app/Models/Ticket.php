@@ -57,6 +57,8 @@ class Ticket extends Model
     public function parent(): BelongsTo { return $this->belongsTo(Ticket::class, 'parent_ticket_id'); }
     public function children(): HasMany { return $this->hasMany(Ticket::class, 'parent_ticket_id'); }
     public function notificationsQueue(): HasMany { return $this->hasMany(NotificationQueue::class); }
+    public function attachments(): HasMany { return $this->hasMany(TicketAttachment::class); }
+    public function emailMessages(): HasMany { return $this->hasMany(EmailMessage::class); }
 
     // Scopes (mirror existing API filters)
     public function scopeOpen($q) { return $q->whereNotIn('status', ['Resolved', 'Closed', 'Canceled']); }

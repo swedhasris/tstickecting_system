@@ -1,13 +1,14 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { collection, addDoc, query, onSnapshot, updateDoc, doc, serverTimestamp, orderBy, where, deleteDoc } from "firebase/firestore";
 import { db, handleFirestoreError, OperationType } from "../lib/firebase";
 import { useAuth } from "../contexts/AuthContext";
 import { ROLE_HIERARCHY, Role } from "../lib/roles";
-import { Plus, Filter, MoreVertical, Search, Edit, Trash2, Users } from "lucide-react";
+import { Plus, Filter, MoreVertical, Search, Edit, Trash2, Users, Mic } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn, formatDate } from "@/lib/utils";
 import { useServiceCatalog } from "../lib/serviceCatalog";
 import { calculateSLADeadline } from "../lib/slaUtils";
+import { createSpeechController } from "../lib/speechToEnglish";
 
 import { Link, useSearchParams } from "react-router-dom";
 import { IT_SERVICE_CATALOG } from "../lib/itServiceCatalogDefaults";
@@ -40,6 +41,8 @@ export function Tickets() {
   const [previewNumber, setPreviewNumber] = useState("");
 
   const openModal = () => {
+    speechControllerRef.current?.stop();
+    setSpeechLiveText("");
     setPreviewNumber(`INC${Math.floor(1000000 + Math.random() * 9000000)}`);
     const companyId = searchParams.get("companyId");
     setNewTicket(prev => ({
@@ -50,15 +53,54 @@ export function Tickets() {
     setCallerSearch(profile?.name || user?.email || "");
     setIsModalOpen(true);
   };
+  const closeModal = () => {
+    speechControllerRef.current?.stop();
+    setSpeechLiveText("");
+    setIsModalOpen(false);
+  };
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [suggestedSolution, setSuggestedSolution] = useState<string | null>(null);
+  const [speechLiveText, setSpeechLiveText] = useState("");
+  const [speechListening, setSpeechListening] = useState(false);
+  const [speechSupported, setSpeechSupported] = useState(true);
+  const speechControllerRef = useRef<ReturnType<typeof createSpeechController> | null>(null);
 
   useEffect(() => {
     if (action === "new") {
       openModal();
     }
   }, [action]);
+
+  useEffect(() => {
+    const controller = createSpeechController({
+      onInterim: (text) => {
+        setSpeechLiveText(text);
+        setNewTicket(prev => ({ ...prev, description: text }));
+      },
+      onFinal: (text) => {
+        setSpeechLiveText("");
+        setNewTicket(prev => ({ ...prev, description: text }));
+      },
+      onStateChange: (listening) => {
+        setSpeechListening(listening);
+        if (!listening) {
+          setSpeechLiveText("");
+        }
+      },
+      onError: (message) => {
+        setSpeechListening(false);
+        alert(message);
+      }
+    });
+
+    speechControllerRef.current = controller;
+    setSpeechSupported(controller.supported);
+
+    return () => {
+      controller.stop();
+    };
+  }, []);
 
   const [newTicket, setNewTicket] = useState({
     caller: profile?.name || user?.email || "",
@@ -397,7 +439,7 @@ export function Tickets() {
         console.error("Failed to log creation activity:", e);
       }
 
-      setIsModalOpen(false);
+      closeModal();
       alert(`Ticket ${ticketNumber} has been created successfully.`);
 
       setNewTicket({
@@ -431,6 +473,7 @@ export function Tickets() {
         watchList: "",
         company: ""
       });
+      setSpeechLiveText("");
     } catch (error: any) {
       console.error("CRITICAL: Error creating ticket:", error);
       alert(`Failed to create ticket: ${error.message || "Unknown error"}. Please check your connection and try again.`);
@@ -605,7 +648,7 @@ export function Tickets() {
                 <span className="text-sm font-bold">New Record</span>
               </div>
               <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" onClick={() => setIsModalOpen(false)}>Cancel</Button>
+                <Button variant="outline" size="sm" onClick={closeModal}>Cancel</Button>
                 <Button size="sm" className="bg-sn-green text-sn-dark font-bold" onClick={(e: any) => handleCreateTicket(e)} disabled={isSubmitting}>
                   {isSubmitting ? "Submitting..." : "Submit"}
                 </Button>
@@ -1092,17 +1135,36 @@ export function Tickets() {
                     >
                       {isAiLoading ? "Analyzing..." : "Autofill with AI"}
                     </Button>
+                    <button
+                      type="button"
+                      onClick={() => speechControllerRef.current?.toggle()}
+                      disabled={!speechSupported}
+                      className={cn(
+                        "p-1.5 hover:bg-muted rounded transition-colors ml-1 border border-border h-8 w-8 flex items-center justify-center",
+                        speechListening && "bg-sn-green/15 text-sn-green border-sn-green"
+                      )}
+                      title={speechListening ? "Stop Dictation" : "Dictation"}
+                    >
+                      <Mic className="w-4 h-4" />
+                    </button>
                   </div>
                 </div>
                 <div className="grid grid-cols-6 items-start gap-4">
                   <label className="text-[11px] text-right font-medium uppercase leading-tight mt-1">Description</label>
-                  <textarea
-                    rows={4}
-                    value={newTicket.description}
-                    onChange={e => setNewTicket({ ...newTicket, description: e.target.value })}
-                    className={`col-span-5 p-1.5 border rounded text-xs focus:ring-1 focus:ring-sn-green resize-none h-32 transition-all ${suggestedSolution ? 'border-purple-400 ring-1 ring-purple-300 bg-purple-50' : 'border-border'}`}
-                    placeholder="Describe the issue in detail... or use Autofill with AI above"
-                  />
+                  <div className="col-span-5 space-y-1.5">
+                    <textarea
+                      rows={4}
+                      value={newTicket.description}
+                      onChange={e => setNewTicket({ ...newTicket, description: e.target.value })}
+                      className={`w-full p-1.5 border rounded text-xs focus:ring-1 focus:ring-sn-green resize-none h-32 transition-all ${suggestedSolution ? 'border-purple-400 ring-1 ring-purple-300 bg-purple-50' : 'border-border'}`}
+                      placeholder="Describe the issue in detail... or use Autofill with AI above"
+                    />
+                    {speechListening && (
+                      <div className="text-[10px] text-sn-green font-medium">
+                        Listening{speechLiveText ? `: ${speechLiveText}` : "..."}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -1126,7 +1188,7 @@ export function Tickets() {
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => setIsModalOpen(false)}
+                  onClick={closeModal}
                   className="px-6 h-8 text-[11px] font-bold uppercase tracking-wider"
                 >
                   Cancel

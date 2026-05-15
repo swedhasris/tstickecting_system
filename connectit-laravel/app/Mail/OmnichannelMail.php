@@ -4,6 +4,7 @@ namespace App\Mail;
 
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
+use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Queue\SerializesModels;
@@ -28,6 +29,12 @@ class OmnichannelMail extends Mailable
     {
         return new Envelope(
             subject: $this->subjectText ?? 'Ticket Notification',
+            replyTo: [
+                new Address(
+                    config('services.support_mailbox.address', config('mail.from.address')),
+                    config('services.support_mailbox.name', config('mail.from.name'))
+                ),
+            ],
         );
     }
 

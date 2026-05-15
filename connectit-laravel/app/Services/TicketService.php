@@ -47,6 +47,8 @@ class TicketService
         $user = $user ?: Auth::user();
         
         $ticket = DB::transaction(function () use ($data, $user) {
+            $actorName = $user?->name ?? ($data['created_by_name'] ?? 'System');
+            $actorId = $user?->uid ?? ($data['created_by'] ?? 'system');
             $priority = $this->calculatePriority($data['impact'], $data['urgency']);
             
             // Find SLA Policy
@@ -87,8 +89,8 @@ class TicketService
                 'assignment_group' => $data['assignment_group'] ?? 'Service Desk',
                 'assigned_to' => $data['assigned_to'] ?? null,
                 'assigned_to_name' => $data['assigned_to_name'] ?? null,
-                'created_by' => $user->uid ?? 'system',
-                'created_by_name' => $user->name ?? 'System',
+                'created_by' => $actorId,
+                'created_by_name' => $actorName,
                 'response_deadline' => $responseDeadline,
                 'resolution_deadline' => $resolutionDeadline,
             ]);
@@ -97,8 +99,8 @@ class TicketService
             TicketHistory::create([
                 'ticket_id' => $ticket->id,
                 'action' => 'Ticket Created',
-                'user' => $user->name ?? 'System',
-                'user_id' => $user->uid ?? 'system',
+                'user' => $actorName,
+                'user_id' => $actorId,
                 'details' => "Ticket {$ticketNumber} created via portal.",
             ]);
 
@@ -107,9 +109,9 @@ class TicketService
                 'ticket_id' => $ticket->id,
                 'activity_type' => ActivityType::System,
                 'visibility_type' => VisibilityType::Public,
-                'created_by' => $user->uid ?? 'system',
-                'created_by_name' => $user->name ?? 'System',
-                'message' => "Ticket Created by " . ($user->name ?? 'System'),
+                'created_by' => $actorId,
+                'created_by_name' => $actorName,
+                'message' => "Ticket Created by " . $actorName,
                 'metadata_json' => [
                     'priority' => $priority->value,
                     'category' => $ticket->category,
@@ -174,8 +176,8 @@ class TicketService
             TicketHistory::create([
                 'ticket_id' => $ticket->id,
                 'action' => "Status updated to {$newStatus->value}",
-                'user' => $user->name ?? 'System',
-                'user_id' => $user->uid ?? 'system',
+                'user' => $user?->name ?? 'System',
+                'user_id' => $user?->uid ?? 'system',
                 'details' => $reason,
             ]);
 
@@ -184,14 +186,20 @@ class TicketService
                 'ticket_id' => $ticket->id,
                 'activity_type' => ActivityType::StatusChange,
                 'visibility_type' => VisibilityType::Public,
-                'created_by' => $user->uid ?? 'system',
-                'created_by_name' => $user->name ?? 'System',
+                'created_by' => $user?->uid ?? 'system',
+                'created_by_name' => $user?->name ?? 'System',
                 'message' => "Status changed from {$oldStatus->value} to {$newStatus->value}",
                 'metadata_json' => ['old_status' => $oldStatus->value, 'new_status' => $newStatus->value, 'reason' => $reason],
             ]);
 
+            if ($newStatus === TicketStatus::Closed) {
+                $this->omniChannel->notifyTicketClosed($ticket);
+            } elseif ($newStatus !== TicketStatus::Resolved) {
+                $this->omniChannel->notifyTicketStatusChanged($ticket, $oldStatus->value, $newStatus->value);
+            }
+
             // Dispatch TicketResolved event if applicable
-            if ($newStatus->isResolved()) {
+            if ($newStatus === TicketStatus::Resolved) {
                 event(new \App\Events\TicketResolved($ticket));
             }
 
@@ -217,11 +225,11 @@ class TicketService
             'ticket_id' => $ticket->id,
             'activity_type' => ActivityType::AssignmentChange,
             'visibility_type' => VisibilityType::Public,
-            'created_by' => $user->uid ?? 'system',
-            'created_by_name' => $user->name ?? 'System',
-            'message' => "Ticket assigned to {$ticket->assigned_to_name}",
-            'metadata_json' => ['assigned_to' => $ticket->assigned_to, 'group' => $ticket->assignment_group],
-        ]);
+                'created_by' => $user?->uid ?? 'system',
+                'created_by_name' => $user?->name ?? 'System',
+                'message' => "Ticket assigned to {$ticket->assigned_to_name}",
+                'metadata_json' => ['assigned_to' => $ticket->assigned_to, 'group' => $ticket->assignment_group],
+            ]);
 
         event(new \App\Events\TicketAssigned($ticket));
 
@@ -239,11 +247,11 @@ class TicketService
             'ticket_id' => $ticket->id,
             'activity_type' => $isInternal ? ActivityType::WorkNote : ActivityType::Comment,
             'visibility_type' => $isInternal ? VisibilityType::Internal : VisibilityType::Public,
-            'created_by' => $user->uid ?? 'system',
-            'created_by_name' => $user->name ?? 'System',
-            'message' => $message,
-            'channel' => 'portal',
-        ]);
+                'created_by' => $user?->uid ?? 'system',
+                'created_by_name' => $user?->name ?? 'System',
+                'message' => $message,
+                'channel' => 'portal',
+            ]);
 
         event(new \App\Events\CommentAdded($ticket, $message, $isInternal));
 

@@ -10,11 +10,40 @@ function fmtHMS(s: number) {
 }
 
 export function AppNavbar() {
-  const { profile } = useAuth();
+  const { user, profile } = useAuth();
   const { theme, setTheme, resolvedTheme } = useTheme();
   const { status, elapsed, startWatcher, stopWatcher } = useActivityTracker();
+  const [notificationCount, setNotificationCount] = React.useState(0);
 
   const isActive = status === 'active';
+
+  React.useEffect(() => {
+    const uid = user?.uid || profile?.uid;
+    if (!uid) return;
+
+    let disposed = false;
+
+    const loadCount = async () => {
+      try {
+        const res = await fetch(`/api/notifications/unread-count?user_id=${encodeURIComponent(uid)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!disposed) {
+          setNotificationCount(Number(data.count || 0));
+        }
+      } catch {
+        // keep navbar quiet if notifications are unavailable
+      }
+    };
+
+    loadCount();
+    const timer = setInterval(loadCount, 30000);
+
+    return () => {
+      disposed = true;
+      clearInterval(timer);
+    };
+  }, [user?.uid, profile?.uid]);
 
   return (
     <header className="h-16 bg-background border-b border-border flex items-center justify-between px-8 sticky top-0 z-10">
@@ -91,9 +120,18 @@ export function AppNavbar() {
           </button>
         </div>
 
-        <button className="relative text-muted-foreground hover:text-foreground transition-colors">
+        <button
+          className="relative text-muted-foreground hover:text-foreground transition-colors"
+          title={notificationCount > 0 ? `${notificationCount} unread notifications` : "Notifications"}
+        >
           <Bell className="w-5 h-5" />
-          <span className="absolute -top-1 -right-1 w-2 h-2 bg-destructive rounded-full" />
+          {notificationCount > 0 ? (
+            <span className="absolute -top-2 -right-2 min-w-[18px] h-[18px] px-1 bg-destructive text-white rounded-full text-[10px] font-bold flex items-center justify-center leading-none">
+              {notificationCount > 99 ? '99+' : notificationCount}
+            </span>
+          ) : (
+            <span className="absolute -top-1 -right-1 w-2 h-2 bg-destructive rounded-full opacity-60" />
+          )}
         </button>
         
         <div className="flex items-center gap-3 pl-6 border-l border-border">

@@ -24,6 +24,6 @@
         <tr><td class="label">Description</td><td>{!! nl2br(e($ticket->description)) !!}</td></tr>
         <tr><td class="label">Created</td><td>{{ $ticket->created_at->format('M d, Y — h:i A') }}</td></tr>
     </table>
-    <p class="footer">This is an automated notification. Please do not reply directly to this email.</p>
+    <p class="footer">Reply to {{ config('services.support_mailbox.address') }} to add updates to this ticket.</p>
 </body>
 </html>

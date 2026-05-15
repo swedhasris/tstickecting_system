@@ -99,10 +99,17 @@ export function ActivityCard({ activity, formatDate }: ActivityCardProps) {
         {metadata.attachments && metadata.attachments.length > 0 && (
           <div className="flex flex-wrap gap-2 mt-1">
             {metadata.attachments.map((att: any, i: number) => (
-              <div key={i} className="flex items-center gap-1.5 text-[11px] bg-muted/30 border border-border rounded-md px-2.5 py-1.5 text-sn-dark hover:bg-muted/50 cursor-pointer transition-colors">
+              <a
+                key={i}
+                href={att.url || "#"}
+                target={att.url ? "_blank" : undefined}
+                rel={att.url ? "noreferrer" : undefined}
+                className="flex items-center gap-1.5 text-[11px] bg-muted/30 border border-border rounded-md px-2.5 py-1.5 text-sn-dark hover:bg-muted/50 cursor-pointer transition-colors"
+                onClick={(e) => { if (!att.url) e.preventDefault(); }}
+              >
                 <Paperclip className="w-3 h-3 text-muted-foreground" />
                 {att.name}
-              </div>
+              </a>
             ))}
           </div>
         )}
