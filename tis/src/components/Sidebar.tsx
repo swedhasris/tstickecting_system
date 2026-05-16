@@ -38,7 +38,9 @@ import {
   KeyRound,
   Monitor,
   Tag,
+  Mail,
 } from "lucide-react";
+
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { db } from "../lib/firebase";
@@ -138,7 +140,9 @@ export function Sidebar() {
         { icon: CheckCircle2, label: "Approved Timesheets", path: "/timesheet/reports?status=Approved" },
         { icon: Palette, label: "Branding", path: "/branding", superAdminOnly: true },
         { icon: Tag, label: "Custom Form Dropdowns", path: "/custom-dropdowns" },
+        { icon: Mail, label: "Email Integrations", path: "/email-integrations", ultraSuperAdminOnly: true },
       ]
+
     }
   ];
 
@@ -148,8 +152,16 @@ export function Sidebar() {
     );
   };
 
+  const hasAccess = (item: MenuItem) => {
+    if (item.ultraSuperAdminOnly) return profile?.role === "ultra_super_admin";
+    if (item.superAdminOnly) return profile?.role === "super_admin" || profile?.role === "ultra_super_admin";
+    if (item.adminOnly) return profile?.role === "admin" || profile?.role === "super_admin" || profile?.role === "ultra_super_admin";
+    return true;
+  };
+
   const filterItems = (items: MenuItem[]): MenuItem[] => {
     return items
+      .filter(item => hasAccess(item))
       .map(item => {
         if (item.items) {
           const filteredSubItems = filterItems(item.items);
@@ -164,14 +176,8 @@ export function Sidebar() {
       .filter(Boolean) as MenuItem[];
   };
 
-  const hasAccess = (item: MenuItem) => {
-    if (item.ultraSuperAdminOnly) return profile?.role === "ultra_super_admin";
-    if (item.superAdminOnly) return profile?.role === "super_admin" || profile?.role === "ultra_super_admin";
-    if (item.adminOnly) return profile?.role === "admin" || profile?.role === "super_admin" || profile?.role === "ultra_super_admin";
-    return true;
-  };
+  const filteredMenu = filterItems(menuStructure);
 
-  const filteredMenu = filterItems(menuStructure).filter(hasAccess);
 
   return (
     <aside className={cn(

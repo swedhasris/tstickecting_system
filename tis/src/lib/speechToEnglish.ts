@@ -24,12 +24,15 @@ export interface SpeechController {
  * Maps Tamil Unicode and Tanglish words to English concepts.
  */
 const DICTIONARY: Record<string, string> = {
-  // Pronouns
+  // Pronouns & Possessives
   "எனக்கு": "I", "என்னால்": "I", "நான்": "I", "நாங்கள்": "we", "எங்களுக்கு": "us",
   "enaku": "I", "enakku": "I", "naan": "I", "naanga": "we", "engaluku": "us",
-  "நீங்கள்": "you", "உங்களுக்கு": "you", "unaku": "you", "ungaluku": "you",
+  "நீங்கள்": "you", "உங்களுக்கு": "you", "unaku": "you", "ungaluku": "you", "ni": "you", "nee": "you",
+  "உங்க": "your", "உங்கள்": "your", "unga": "your", "ungal": "your",
   "அவன்": "he", "அவள்": "she", "அவர்கள்": "they", "அது": "it",
   "avan": "he", "aval": "she", "avanga": "they", "adhu": "it", "idhu": "this",
+  "என்ன": "what", "enna": "what", "எது": "which", "edhu": "which",
+
 
   // Common IT Nouns (Tamil Unicode)
   "லாகின்": "login", "டிக்கெட்": "ticket", "பாஸ்வேர்ட்": "password", "கடவுச்சொல்": "password",
@@ -38,6 +41,8 @@ const DICTIONARY: Record<string, string> = {
   "பிரிண்டர்": "printer", "ஸ்கிரீன்": "screen", "திரை": "screen", "மவுஸ்": "mouse",
   "கீபோர்ட்": "keyboard", "சாப்ட்வேர்": "software", "மென்பொருள்": "software",
   "அப்ளிகேஷன்": "application", "பயன்பாடு": "application", "வைஃபை": "wifi",
+  "ப்ராஜெக்ட்": "project", "வேலை": "work", "டாஸ்க்": "task",
+
 
   // Common IT Nouns (Tanglish)
   "passward": "password", "passcode": "password", "error": "error", "issue": "issue",
@@ -51,10 +56,12 @@ const DICTIONARY: Record<string, string> = {
   "இருக்கு": "is", "இருக்கிறது": "is", "இல்லை": "is not", "இல்ல": "is not",
   "ஆகுது": "happening", "ஆகல": "not working", "ஆகவில்லை": "not working",
   "வேலை": "work", "தெரியல": "don't know", "மறந்துட்டேன்": "forgot",
+  "முடிஞ்சிடும்": "will be finished", "முடிந்தது": "finished", "முடிஞ்சது": "finished",
+
 
   // Verbs & States (Tanglish)
-  "iruku": "is", "irukku": "is", "irukken": "am", "iruka": "is there",
-  "illa": "is not", "illai": "is not", "illea": "is not", "illaya": "is not",
+  "iruku": "is", "irukku": "is", "irukken": "am", "iruka": "is there", "irukkum": "will be there",
+  "illa": "is not", "illai": "is not", "illea": "is not", "illaya": "is not", "illama": "without",
   "aachi": "done", "aachu": "completed", "aagidum": "will be done",
   "aaguthu": "is happening", "aguthu": "is happening",
   "aagala": "is not working", "agala": "is not working",
@@ -73,7 +80,8 @@ const DICTIONARY: Record<string, string> = {
   "yen": "why", "innum": "still", "ellam": "all", "onnum": "nothing",
   "adhu": "that", "idhu": "this", "oru": "a",
   "slow-ah": "slowly", "fast-ah": "quickly", "maari": "like",
-  "solran": "I am saying", "kekala": "not audible",
+  "solran": "I am saying", "kekala": "not audible", "puriyala": "I don't understand",
+  "valla": "not working", "vaala": "not working",
 };
 
 /**
@@ -101,6 +109,14 @@ const PHRASE_PATTERNS: [RegExp, string][] = [
   [/enna\s+prachana|என்ன\s+பிரச்சனை/gi, "What is the problem?"],
   [/sari\s+panna\s+mudiyala|சரி\s+பண்ண\s+முடியல/gi, "I am unable to fix it"],
   [/marupadiyum\s+marupadiyum/gi, "repeatedly"],
+  [/konjam\s+wait\s+pannunga/gi, "please wait a moment"],
+  [/odane\s+venum/gi, "required immediately"],
+  [/seekiram\s+mudinga/gi, "please complete it soon"],
+  [/(\w+)\s+mudinga/gi, "please finish the $1"],
+  [/unga\s+(\w+)\s+mudinjidum/gi, "your $1 will be finished"],
+  [/உங்க\s+(\w+)\s+முடிஞ்சிடும்/gi, "your $1 will be finished"],
+  [/nee\s+unga\s+(\w+)\s+mudinjidum/gi, "your $1 will be finished"],
+  [/நீ\s+உங்க\s+(\w+)\s+முடிஞ்சிடும்/gi, "your $1 will be finished"],
 ];
 
 /**
@@ -149,8 +165,10 @@ export function transformSpeechToProfessionalEnglish(raw: string): string {
 }
 
 function postProcessEnglish(text: string): string {
-  let s = text.replace(/[\u0B80-\u0BFF]/g, ""); // Remove remaining Tamil
+  // Stricter removal: Remove anything that isn't standard Latin/ASCII characters
+  let s = text.replace(/[^\x00-\x7F]/g, ""); 
   s = s.replace(/\s+/g, " ").trim();
+
   
   // Grammar Fixes
   s = s.replace(/\bi unable to\b/gi, "I am unable to");
@@ -253,16 +271,27 @@ export function createSpeechController(
 
       const liveRaw = rawAccumulated + (interim ? " " + interim : "");
       
-      // REQUIREMENT: Show Tamil transcript while speaking
+      // Send raw Tamil for any specialized UI
       onRawInterim?.(liveRaw);
-      onInterim?.(liveRaw); // Tickets.tsx uses this for live preview
+      
+      // REQUIREMENT: Convert to English while talking
+      const liveEnglish = transformSpeechToProfessionalEnglish(liveRaw);
+      onInterim?.(liveEnglish); 
     };
 
     rec.onerror = (e: any) => {
       if (e.error === "no-speech" || e.error === "aborted") return;
       active = false;
       onStateChange?.(false);
-      onError?.("Speech error: " + e.error);
+      
+      let msg = "Speech error: " + e.error;
+      if (e.error === "not-allowed") {
+        msg = "Microphone access denied. Click the lock/microphone icon in the address bar, allow Microphone, then refresh the page.";
+      } else if (e.error === "network") {
+        msg = "Speech recognition needs internet. Please check your connection.";
+      }
+      
+      onError?.(msg);
     };
 
     rec.onend = () => {

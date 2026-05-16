@@ -26,7 +26,8 @@ export const ROLE_LABELS: Record<Role, string> = {
   sub_admin:         "Sub Admin",
   admin:             "Administrator",
   super_admin:       "Super Admin",
-  ultra_super_admin: "Ultra Super Admin",
+  ultra_super_admin: "Ulter Super Admin",
+
 };
 
 export const ROLE_COLORS: Record<Role, string> = {

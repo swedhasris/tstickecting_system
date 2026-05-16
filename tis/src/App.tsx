@@ -46,6 +46,8 @@ const ClearUsers = lazy(() => import("./pages/ClearUsers").then(m => ({ default:
 const BrandingSettings = lazy(() => import("./pages/BrandingSettings").then(m => ({ default: m.BrandingSettings })));
 const ActivityTracker = lazy(() => import("./pages/ActivityTracker").then(m => ({ default: m.ActivityTracker })));
 const CustomDropdownManager = lazy(() => import("./pages/CustomDropdownManager").then(m => ({ default: m.CustomDropdownManager })));
+const EmailIntegrations = lazy(() => import("./pages/EmailIntegrations").then(m => ({ default: m.EmailIntegrations })));
+
 
 function LoadingScreen() {
   return (
@@ -369,7 +371,16 @@ function AppBody() {
               </ProtectedRoute>
             }
           />
+          <Route
+            path="/email-integrations"
+            element={
+              <ProtectedRoute>
+                <EmailIntegrations />
+              </ProtectedRoute>
+            }
+          />
           <Route path="*" element={<Navigate to="/" />} />
+
           </Routes>
         </Suspense>
           </Router>

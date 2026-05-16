@@ -54,6 +54,8 @@ export function Tickets() {
 
   const [tickets, setTickets] = useState<any[]>([]);
   const [agents, setAgents] = useState<any[]>([]);
+  const [slaPolicies, setSlaPolicies] = useState<any[]>([]);
+  const [emailConfigs, setEmailConfigs] = useState<any[]>([]);
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [callerSearch, setCallerSearch] = useState("");
   const [affectedSearch, setAffectedSearch] = useState("");
@@ -170,7 +172,7 @@ export function Tickets() {
   });
 
   const [assignedTo, setAssignedTo] = useState("");
-  const [slaPolicies, setSlaPolicies] = useState<any[]>([]);
+
 
   // ── Custom Dropdowns: loaded from server, filtered by company ──
   const [customDropdowns, setCustomDropdowns] = useState<any[]>([]);
@@ -186,7 +188,13 @@ export function Tickets() {
       .then(data => setCustomDropdowns(Array.isArray(data) ? data : []))
       .catch(() => setCustomDropdowns([]));
 
+    fetch('/api/email-configs')
+      .then(r => r.ok ? r.json() : [])
+      .then(data => setEmailConfigs(data))
+      .catch(() => setEmailConfigs([]));
+
     if (companyId) {
+
       fetch(`/api/feature-permissions?company_id=${encodeURIComponent(companyId)}`)
         .then(r => r.ok ? r.json() : [])
         .then(data => setFeaturePermissions(Array.isArray(data) ? data : []))
@@ -503,7 +511,9 @@ export function Tickets() {
         priority,
         status: newTicket.assignedTo ? "Assigned" : "New",
         createdBy: user.uid,
+        company_id: newTicket.company || null,
         createdAt: serverTimestamp(),
+
         updatedAt: serverTimestamp(),
         responseDeadline: responseDeadline.toISOString(),
         resolutionDeadline: null,
@@ -788,6 +798,23 @@ export function Tickets() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-4">
                 {/* Left Column */}
                 <div className="space-y-4">
+                  {/* Company */}
+                  <div className="grid grid-cols-3 items-center gap-4">
+                    <label className="text-[11px] text-right font-medium text-muted-foreground uppercase leading-tight">
+                      Company
+                    </label>
+                    <select
+                      value={newTicket.company}
+                      onChange={e => setNewTicket({ ...newTicket, company: e.target.value })}
+                      className="col-span-2 p-1.5 border border-border rounded text-xs focus:ring-1 focus:ring-sn-green h-8 bg-white"
+                    >
+                      <option value="">-- No Company Assigned --</option>
+                      {emailConfigs.map(config => (
+                        <option key={config.id} value={config.id}>{config.company_name}</option>
+                      ))}
+                    </select>
+                  </div>
+
                   {/* Number */}
                   <div className="grid grid-cols-3 items-center gap-4">
                     <label className="text-[11px] text-right font-medium text-muted-foreground uppercase leading-tight">Number</label>

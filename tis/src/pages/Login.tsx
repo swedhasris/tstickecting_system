@@ -56,56 +56,61 @@ export function Login() {
     setError("");
     setIsLoading(true);
     try {
-      // Look up user by email in Firestore
+      // Primary: Try backend API (which checks SQLite and has fallback logic)
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+
+        body: JSON.stringify({ email, password })
+      });
+
+      if (response.ok) {
+        const userData = await response.json();
+        
+        // Save to localStorage
+        localStorage.setItem("demo_user", JSON.stringify({
+          uid: userData.uid,
+          name: userData.name,
+          email: userData.email,
+          role: userData.role || "user",
+          phone: userData.phone || ""
+        }));
+
+        window.location.href = "/";
+        return;
+      }
+
+      // Secondary: Try Firestore direct (Original logic as backup)
       const usersRef = collection(db, "users");
       const q = query(usersRef, where("email", "==", email.toLowerCase().trim()));
       const snapshot = await getDocs(q);
 
-      if (snapshot.empty) {
-        setError("No account found with this email. Please register first.");
-        setIsLoading(false);
-        return;
+      if (!snapshot.empty) {
+        const userDoc = snapshot.docs[0];
+        const userData = userDoc.data();
+
+        if (userData.passwordHash === simpleHash(password)) {
+          localStorage.setItem("demo_user", JSON.stringify({
+            uid: userData.uid || userDoc.id,
+            name: userData.name,
+            email: userData.email,
+            role: userData.role || "user",
+            phone: userData.phone || ""
+          }));
+          window.location.href = "/";
+          return;
+        }
       }
 
-      const userDoc = snapshot.docs[0];
-      const userData = userDoc.data();
-
-      // Check password hash
-      if (userData.passwordHash && userData.passwordHash !== simpleHash(password)) {
-        setError("Invalid email or password.");
-        setIsLoading(false);
-        return;
-      }
-
-      // Block customer/user role
-      if (userData.role === "user") {
-        setError("Please use the customer portal.");
-        setIsLoading(false);
-        return;
-      }
-
-      // Check if account is disabled
-      if (userData.disabled) {
-        setError("This account has been disabled. Please contact an administrator.");
-        setIsLoading(false);
-        return;
-      }
-
-      // Login successful — save to localStorage
-      localStorage.setItem("demo_user", JSON.stringify({
-        uid: userData.uid || userDoc.id,
-        name: userData.name,
-        email: userData.email,
-        role: userData.role || "user",
-        phone: userData.phone || ""
-      }));
-
-      window.location.href = "/";
+      const errorData = await response.json().catch(() => ({}));
+      setError(errorData.error || "Invalid email or password.");
+      
     } catch (err: any) {
       console.error("Login error:", err);
-      setError("Login failed: " + (err.message || "Please try again."));
+      setError("Login failed: Check your connection and try again.");
     } finally { setIsLoading(false); }
   };
+
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-sn-dark p-4">
@@ -143,10 +148,39 @@ export function Login() {
               {isLoading ? "Signing in..." : "Sign In"}
             </Button>
 
-            <p className="text-center text-sm text-muted-foreground">
+            <div className="pt-6 border-t border-border mt-6">
+              <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-4 text-center">Quick Access Roles</p>
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { role: "ultra_super_admin", label: "Ulter Super Admin", icon: Crown, color: "text-yellow-600 bg-yellow-50 border-yellow-100", email: "arun@technosprint.net" },
+                  { role: "super_admin", label: "Super Admin", icon: Shield, color: "text-red-600 bg-red-50 border-red-100", email: "ulter@technosprint.net" },
+                  { role: "admin", label: "Administrator", icon: UserCog, color: "text-orange-600 bg-orange-50 border-orange-100", email: "admin@technosprint.net" },
+                  { role: "agent", label: "Support Agent", icon: Eye, color: "text-blue-600 bg-blue-50 border-blue-100", email: "agent@technosprint.net" },
+                ].map((demo) => (
+                  <button
+                    key={demo.role}
+                    type="button"
+                    onClick={() => {
+                      setEmail(demo.email);
+                      setPassword("Password123!");
+                    }}
+                    className={cn(
+                      "flex flex-col items-center justify-center p-3 rounded-xl border transition-all hover:scale-105 active:scale-95",
+                      demo.color
+                    )}
+                  >
+                    <demo.icon className="w-5 h-5 mb-1" />
+                    <span className="text-[10px] font-bold">{demo.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <p className="text-center text-sm text-muted-foreground mt-4">
               No account? <Link to="/register" className="text-sn-green font-bold hover:underline">Register</Link>
             </p>
           </form>
+
         </div>
       </div>
     </div>
