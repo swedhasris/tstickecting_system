@@ -193,28 +193,17 @@ export async function processEmailQueue() {
   for (const job of pending) {
     await execute("UPDATE notifications_queue SET status = 'processing' WHERE id = ?", [job.id]);
     try {
-      const configs = await query("SELECT * FROM company_email_configs WHERE is_active = 1 ORDER BY is_default DESC LIMIT 1");
-      if (configs.length === 0) {
-        await execute("UPDATE notifications_queue SET status = 'failed', error_message = 'No active email config' WHERE id = ?", [job.id]);
-        continue;
-      }
-      const config = configs[0];
+      let configs = await query("SELECT * FROM company_email_configs WHERE is_active = 1 ORDER BY is_default DESC LIMIT 1");
+      let config = configs[0];
       let transporter;
-      let fromAddress = `"${config.company_name} Support" <${config.email_address}>`;
+      let fromAddress = "";
       
-      try {
+      if (!config) {
+        console.log("[EmailQueue] No active DB configs. Falling back to env defaults (Support@technosprint.net)...");
         transporter = nodemailer.createTransport({
-          host: config.smtp_host, port: config.smtp_port, secure: config.smtp_port === 465,
-          auth: { user: config.smtp_user, pass: config.smtp_pass },
-          tls: { rejectUnauthorized: false }
-        });
-        await transporter.verify();
-      } catch (verifyErr) {
-        console.warn("[EmailQueue] Config transporter failed verification. Falling back to environment SMTP...", verifyErr);
-        transporter = nodemailer.createTransport({
-          host: process.env.SMTP_HOST || 'smtp.gmail.com',
-          port: parseInt(process.env.SMTP_PORT || '587'),
-          secure: process.env.SMTP_PORT === '465',
+          host: process.env.SMTP_HOST || 'mail.technosprint.net',
+          port: parseInt(process.env.SMTP_PORT || '465'),
+          secure: (process.env.SMTP_PORT || '465') === '465',
           auth: {
             user: process.env.SMTP_USER || 'Support@technosprint.net',
             pass: process.env.SMTP_PASS || '',
@@ -222,6 +211,29 @@ export async function processEmailQueue() {
           tls: { rejectUnauthorized: false }
         });
         fromAddress = `"Technosprint Support" <${process.env.SMTP_USER || 'Support@technosprint.net'}>`;
+      } else {
+        fromAddress = `"${config.company_name} Support" <${config.email_address}>`;
+        try {
+          transporter = nodemailer.createTransport({
+            host: config.smtp_host, port: config.smtp_port, secure: config.smtp_port === 465,
+            auth: { user: config.smtp_user, pass: config.smtp_pass },
+            tls: { rejectUnauthorized: false }
+          });
+          await transporter.verify();
+        } catch (verifyErr) {
+          console.warn("[EmailQueue] Config transporter failed verification. Falling back to environment SMTP...", verifyErr);
+          transporter = nodemailer.createTransport({
+            host: process.env.SMTP_HOST || 'mail.technosprint.net',
+            port: parseInt(process.env.SMTP_PORT || '465'),
+            secure: (process.env.SMTP_PORT || '465') === '465',
+            auth: {
+              user: process.env.SMTP_USER || 'Support@technosprint.net',
+              pass: process.env.SMTP_PASS || '',
+            },
+            tls: { rejectUnauthorized: false }
+          });
+          fromAddress = `"Technosprint Support" <${process.env.SMTP_USER || 'Support@technosprint.net'}>`;
+        }
       }
 
       let info;
@@ -235,9 +247,9 @@ export async function processEmailQueue() {
         if (sendErr.message?.includes('535') || sendErr.message?.includes('Authentication')) {
           console.warn("[EmailQueue] Send failed due to auth error. Retrying with environment SMTP fallback...");
           const fallbackTransporter = nodemailer.createTransport({
-            host: process.env.SMTP_HOST || 'smtp.gmail.com',
-            port: parseInt(process.env.SMTP_PORT || '587'),
-            secure: process.env.SMTP_PORT === '465',
+            host: process.env.SMTP_HOST || 'mail.technosprint.net',
+            port: parseInt(process.env.SMTP_PORT || '465'),
+            secure: (process.env.SMTP_PORT || '465') === '465',
             auth: {
               user: process.env.SMTP_USER || 'Support@technosprint.net',
               pass: process.env.SMTP_PASS || '',
