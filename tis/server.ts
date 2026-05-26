@@ -1994,6 +1994,18 @@ async function startServer() {
     }
   });
 
+  app.delete("/api/timesheets/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      await execute("DELETE FROM time_cards WHERE timesheet_id = ?", [id]);
+      await execute("DELETE FROM timesheets WHERE id = ?", [id]);
+      res.json({ success: true, message: "Timesheet deleted successfully" });
+    } catch (error: any) {
+      console.error("Error deleting timesheet:", error);
+      res.status(500).json({ error: "Failed to delete timesheet" });
+    }
+  });
+
   // Time Card Endpoints
   app.get("/api/time-cards", async (req, res) => {
     try {

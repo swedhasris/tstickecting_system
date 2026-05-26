@@ -460,6 +460,31 @@ export function Tickets() {
       const docRef = await addDoc(collection(db, "tickets"), ticketData);
       console.log("Ticket created successfully with ID:", docRef.id);
 
+      // Dispatch real-time notification
+      try {
+        fetch("/api/notifications/dispatch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ticket: {
+              id: docRef.id,
+              ticket_number: ticketNumber,
+              created_by: user.uid,
+              created_by_name: profile?.name || user.email,
+              assigned_to: newTicket.assignedTo || null,
+              assigned_to_name: assignedUserName || null,
+              status: ticketData.status,
+              priority: priority
+            },
+            actorId: user.uid,
+            actorName: profile?.name || user.email,
+            type: "create"
+          })
+        });
+      } catch (e) {
+        console.error("Failed to dispatch creation notification:", e);
+      }
+
       // Log creation to activity timeline (Unified Activity Stream)
       try {
         await fetch(`/api/tickets/${docRef.id}/activities`, {
@@ -503,6 +528,7 @@ export function Tickets() {
   const updateStatus = async (ticketId: string, newStatus: string) => {
     const ticketRef = doc(db, "tickets", ticketId);
     const ticket = tickets.find(t => t.id === ticketId);
+    if (!ticket) return;
     await updateDoc(ticketRef, {
       status: newStatus,
       updatedAt: serverTimestamp(),
@@ -511,22 +537,78 @@ export function Tickets() {
         { action: `Status updated to ${newStatus}`, timestamp: new Date().toISOString(), user: profile?.name || user?.email }
       ]
     });
+
+    // Dispatch real-time notification
+    try {
+      fetch("/api/notifications/dispatch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ticket: {
+            id: ticketId,
+            ticket_number: ticket.number,
+            created_by: ticket.createdBy,
+            created_by_name: ticket.createdByName || ticket.caller,
+            assigned_to: ticket.assignedTo || null,
+            assigned_to_name: ticket.assignedToName || null,
+            status: newStatus,
+            priority: ticket.priority
+          },
+          actorId: user?.uid || "System",
+          actorName: profile?.name || user?.email || "System",
+          type: "update",
+          oldStatus: ticket.status,
+          newStatus: newStatus
+        })
+      });
+    } catch (e) {
+      console.error("Failed to dispatch status notification:", e);
+    }
   };
 
   const updateAssignment = async (ticketId: string, agentId: string) => {
     const ticketRef = doc(db, "tickets", ticketId);
     const ticket = tickets.find(t => t.id === ticketId);
+    if (!ticket) return;
     const agent = agents.find(a => a.id === agentId);
+    const newStatus = agentId ? "Assigned" : "New";
     await updateDoc(ticketRef, {
       assignedTo: agentId,
       assignedToName: agent?.name || "",
-      status: agentId ? "Assigned" : "New",
+      status: newStatus,
       updatedAt: serverTimestamp(),
       history: [
         ...(ticket?.history || []),
         { action: `Assigned to ${agent?.name || "None"}`, timestamp: new Date().toISOString(), user: profile?.name || user?.email }
       ]
     });
+
+    // Dispatch real-time notification
+    try {
+      fetch("/api/notifications/dispatch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ticket: {
+            id: ticketId,
+            ticket_number: ticket.number,
+            created_by: ticket.createdBy,
+            created_by_name: ticket.createdByName || ticket.caller,
+            assigned_to: agentId || null,
+            assigned_to_name: agent?.name || null,
+            status: newStatus,
+            priority: ticket.priority
+          },
+          actorId: user?.uid || "System",
+          actorName: profile?.name || user?.email || "System",
+          type: "update",
+          oldAssignee: ticket.assignedTo,
+          newAssignee: agentId
+        })
+      });
+    } catch (e) {
+      console.error("Failed to dispatch assignment notification:", e);
+    }
   };
 
   return (

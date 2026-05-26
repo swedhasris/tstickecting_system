@@ -103,7 +103,7 @@ export function Calendar() {
   const { user, profile } = useAuth();
 
   /* ── State ── */
-  const [weekOffset, setWeekOffset] = useState(0);
+  const [currentDate, setCurrentDate] = useState(() => new Date());
   const [timesheets, setTimesheets] = useState<any[]>([]);
   const [timeCards, setTimeCards] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -117,6 +117,15 @@ export function Calendar() {
     return found ? found.label : "UTC+05:30";
   });
 
+  // Display/refresh options state
+  const [displayType, setDisplayType] = useState<"overlay" | "calendar_only">("overlay");
+  const [viewDetails, setViewDetails] = useState<"calendar_only" | "with_details">("calendar_only");
+  const [refreshInterval, setRefreshInterval] = useState<number>(0);
+
+  // User lists for admin calendar viewing
+  const [users, setUsers] = useState<any[]>([]);
+  const [selectedUserId, setSelectedUserId] = useState<string>("");
+
   // Side panel for editing
   const [editPanel, setEditPanel] = useState<any>(null);
   const [editForm, setEditForm] = useState({
@@ -125,16 +134,44 @@ export function Calendar() {
   });
   const [editSaving, setEditSaving] = useState(false);
 
-  /* ── Week calculations ── */
-  const monday = useMemo(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + weekOffset * 7);
-    return getMonday(d);
-  }, [weekOffset]);
+  const [showAddDropdown, setShowAddDropdown] = useState(false);
 
+  /* ── Week/Day/Month calculations ── */
   const weekDays = useMemo(() => {
-    return Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(monday.getTime() + i * 86400000);
+    if (viewMode === "day") {
+      const d = new Date(currentDate);
+      return [{
+        date: formatDate(d),
+        dayName: d.toLocaleDateString("en-US", { weekday: "short" }),
+        shortDate: d.toLocaleDateString("en-US", { day: "2-digit", month: "2-digit" }),
+        isWeekend: d.getDay() === 0 || d.getDay() === 6,
+        isToday: formatDate(d) === formatDate(new Date()),
+      }];
+    }
+
+    if (viewMode === "week") {
+      const mon = getMonday(currentDate);
+      return Array.from({ length: 7 }, (_, i) => {
+        const d = new Date(mon.getTime() + i * 86400000);
+        return {
+          date: formatDate(d),
+          dayName: d.toLocaleDateString("en-US", { weekday: "short" }),
+          shortDate: d.toLocaleDateString("en-US", { day: "2-digit", month: "2-digit" }),
+          isWeekend: d.getDay() === 0 || d.getDay() === 6,
+          isToday: formatDate(d) === formatDate(new Date()),
+        };
+      });
+    }
+
+    // viewMode === "month"
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const totalDays = lastDay.getDate();
+
+    return Array.from({ length: totalDays }, (_, i) => {
+      const d = new Date(year, month, i + 1);
       return {
         date: formatDate(d),
         dayName: d.toLocaleDateString("en-US", { weekday: "short" }),
@@ -143,10 +180,10 @@ export function Calendar() {
         isToday: formatDate(d) === formatDate(new Date()),
       };
     });
-  }, [monday]);
+  }, [currentDate, viewMode]);
 
-  const weekStart = weekDays[0].date;
-  const weekEnd = weekDays[6].date;
+  const weekStart = weekDays[0]?.date || formatDate(new Date());
+  const weekEnd = weekDays[weekDays.length - 1]?.date || formatDate(new Date());
 
   /* ── Timezone offset for display ── */
   const tzOffset = useMemo(() => {
@@ -159,13 +196,32 @@ export function Calendar() {
     return hourDecimal + tzOffset;
   }
 
+  /* ── Fetch all users if admin/sub-admin ── */
+  useEffect(() => {
+    if (!user) return;
+    const role = profile?.role || 'user';
+    const hasAdminAccess = role === 'admin' || role === 'sub_admin' || role === 'super_admin' || role === 'ultra_super_admin';
+    if (hasAdminAccess) {
+      fetch("/api/users")
+        .then(r => r.json())
+        .then(list => setUsers(Array.isArray(list) ? list : []))
+        .catch(e => console.error("Error loading users list:", e));
+    }
+  }, [user, profile]);
+
+  const selectedUserProfile = useMemo(() => {
+    if (!selectedUserId) return profile;
+    return users.find(u => u.uid === selectedUserId) || profile;
+  }, [selectedUserId, users, profile]);
+
   /* ── Load data ── */
   const loadData = useCallback(async () => {
     if (!user) return;
     setLoading(true);
     try {
+      const targetUserId = selectedUserId || user.uid;
       // Fetch timesheets for user
-      const tsRes = await fetch(`/api/timesheets?user_id=${user.uid}`);
+      const tsRes = await fetch(`/api/timesheets?user_id=${targetUserId}`);
       const tsList = await tsRes.json();
       setTimesheets(tsList);
 
@@ -175,8 +231,8 @@ export function Calendar() {
         return;
       }
 
-      // Get all time cards for the current week range
-      const tcRes = await fetch(`/api/time-cards?user_id=${user.uid}&start_date=${weekStart}&end_date=${weekEnd}`);
+      // Get all time cards for the current range
+      const tcRes = await fetch(`/api/time-cards?user_id=${targetUserId}&start_date=${weekStart}&end_date=${weekEnd}`);
       const allCards = await tcRes.json();
       setTimeCards(Array.isArray(allCards) ? allCards : []);
     } catch (e) {
@@ -185,7 +241,7 @@ export function Calendar() {
     } finally {
       setLoading(false);
     }
-  }, [user, weekStart, weekEnd]);
+  }, [user, weekStart, weekEnd, selectedUserId]);
 
   useEffect(() => {
     loadData();
@@ -197,7 +253,16 @@ export function Calendar() {
     };
     document.addEventListener('visibilitychange', handleVisibility);
     return () => document.removeEventListener('visibilitychange', handleVisibility);
-  }, []);
+  }, [loadData]);
+
+  // Handle auto refresh interval
+  useEffect(() => {
+    if (refreshInterval <= 0) return;
+    const intervalId = setInterval(() => {
+      loadData();
+    }, refreshInterval);
+    return () => clearInterval(intervalId);
+  }, [refreshInterval, loadData]);
 
   /* ── Filter cards for current week ── */
   const weekCards = useMemo(() => {
@@ -307,23 +372,64 @@ export function Calendar() {
   }
 
   async function saveEditPanel() {
-    if (!editPanel) return;
+    if (!editPanel || !user) return;
     setEditSaving(true);
     try {
-      await fetch(`/api/time-cards/${editPanel.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          start_time: editForm.startTime,
-          end_time: editForm.endTime,
-          hours_worked: parseFloat(editForm.minutesWorked) || 0,
-          work_type: editForm.workType,
-          billable: editForm.billable,
-          description: editForm.description,
-          short_description: editForm.shortDescription,
-          task: editForm.task,
-        })
-      });
+      const targetUserId = selectedUserId || user.uid;
+      if (editPanel.id) {
+        await fetch(`/api/time-cards/${editPanel.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            start_time: editForm.startTime,
+            end_time: editForm.endTime,
+            hours_worked: parseFloat(editForm.minutesWorked) || 0,
+            work_type: editForm.workType,
+            billable: editForm.billable,
+            description: editForm.description,
+            short_description: editForm.shortDescription,
+            task: editForm.task,
+          })
+        });
+      } else {
+        // Create new time card
+        // 1. Get or create timesheet for target user and this entry date's week
+        const entryD = new Date(editPanel.entry_date);
+        const entryMon = getMonday(entryD);
+        const entryMonStr = formatDate(entryMon);
+        const entrySun = new Date(entryMon.getTime() + 6 * 86400000);
+        const entrySunStr = formatDate(entrySun);
+
+        const tsRes = await fetch("/api/timesheets/get-or-create", {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user_id: targetUserId,
+            week_start: entryMonStr,
+            week_end: entrySunStr
+          })
+        });
+        const ts = await tsRes.json();
+
+        // 2. Post new card
+        await fetch("/api/time-cards", {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            timesheet_id: ts.id,
+            user_id: targetUserId,
+            entry_date: editPanel.entry_date,
+            start_time: editForm.startTime,
+            end_time: editForm.endTime,
+            hours_worked: parseFloat(editForm.minutesWorked) || 0,
+            work_type: editForm.workType,
+            billable: editForm.billable,
+            description: editForm.description,
+            short_description: editForm.shortDescription,
+            task: editForm.task,
+          })
+        });
+      }
 
       setEditPanel(null);
       loadData();
@@ -348,7 +454,49 @@ export function Calendar() {
   }
 
   /* ── Navigate ── */
-  function goToday() { setWeekOffset(0); }
+  const goPrevious = () => {
+    setCurrentDate(prev => {
+      const d = new Date(prev);
+      if (viewMode === "day") {
+        d.setDate(d.getDate() - 1);
+      } else if (viewMode === "week") {
+        d.setDate(d.getDate() - 7);
+      } else if (viewMode === "month") {
+        d.setMonth(d.getMonth() - 1);
+      }
+      return d;
+    });
+  };
+
+  const goNext = () => {
+    setCurrentDate(prev => {
+      const d = new Date(prev);
+      if (viewMode === "day") {
+        d.setDate(d.getDate() + 1);
+      } else if (viewMode === "week") {
+        d.setDate(d.getDate() + 7);
+      } else if (viewMode === "month") {
+        d.setMonth(d.getMonth() + 1);
+      }
+      return d;
+    });
+  };
+
+  const goToday = () => {
+    setCurrentDate(new Date());
+  };
+
+  const defaultEntryDate = useMemo(() => {
+    const todayStr = formatDate(new Date());
+    if (todayStr >= weekStart && todayStr <= weekEnd) {
+      return todayStr;
+    }
+    return weekStart;
+  }, [weekStart, weekEnd]);
+
+  const handleAddNewEntry = () => {
+    openEditPanel({ entry_date: defaultEntryDate });
+  };
 
   if (loading) {
     return (
@@ -366,9 +514,14 @@ export function Calendar() {
           <div>
             <h1 className="text-sm font-bold text-sn-dark">Calendar</h1>
             <p className="text-xs text-muted-foreground">
-              My Weekly Calendar View For {profile?.name || "User"},{" "}
-              {new Date(weekStart).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })} -{" "}
-              {new Date(weekEnd).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
+              My {viewMode.charAt(0).toUpperCase() + viewMode.slice(1)}ly Calendar View For {selectedUserProfile?.name || profile?.name || "User"},{" "}
+              {weekStart === "—" ? "—" : (
+                weekStart === weekEnd ? (
+                  new Date(weekStart).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
+                ) : (
+                  `${new Date(weekStart).toLocaleDateString("en-US", { month: "long", day: "numeric" })} - ${weekEnd === "—" ? "—" : new Date(weekEnd).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}`
+                )
+              )}
             </p>
           </div>
         </div>
@@ -377,31 +530,78 @@ export function Calendar() {
       {/* ═══ TOOLBAR ═══ */}
       <div className="bg-white border-b border-border px-4 py-2 flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2">
-          <button className="p-1.5 hover:bg-muted rounded transition-colors"><Plus className="w-4 h-4" /></button>
-          <button className="p-1.5 hover:bg-muted rounded transition-colors"><ChevronDown className="w-4 h-4" /></button>
+          <button onClick={handleAddNewEntry} className="p-1.5 hover:bg-muted rounded transition-colors"><Plus className="w-4 h-4" /></button>
+          
+          <div className="relative">
+            <button 
+              onClick={() => setShowAddDropdown(!showAddDropdown)}
+              className="p-1.5 hover:bg-muted rounded transition-colors"
+            >
+              <ChevronDown className="w-4 h-4" />
+            </button>
+            {showAddDropdown && (
+              <div className="absolute left-0 mt-1 w-36 bg-white border border-border rounded shadow-lg py-1 z-50">
+                <button
+                  onClick={() => {
+                    handleAddNewEntry();
+                    setShowAddDropdown(false);
+                  }}
+                  className="w-full text-left px-3 py-1.5 text-xs hover:bg-muted transition-colors font-medium text-foreground"
+                >
+                  New Time Entry
+                </button>
+                <button
+                  onClick={() => {
+                    openEditPanel({ entry_date: defaultEntryDate, start_time: "", end_time: "" });
+                    setShowAddDropdown(false);
+                  }}
+                  className="w-full text-left px-3 py-1.5 text-xs hover:bg-muted transition-colors font-medium text-foreground"
+                >
+                  New To-Do Item
+                </button>
+              </div>
+            )}
+          </div>
+
           <button onClick={loadData} className="p-1.5 hover:bg-muted rounded transition-colors"><RefreshCw className="w-4 h-4" /></button>
-          <button className="p-1.5 hover:bg-muted rounded transition-colors"><Printer className="w-4 h-4" /></button>
-          <select className="text-xs border border-border rounded px-2 py-1 bg-white outline-none">
-            <option>Display Type: Time with Schedule Overlay</option>
-            <option>Display Type: Calendar Only</option>
+          <button onClick={() => window.print()} className="p-1.5 hover:bg-muted rounded transition-colors"><Printer className="w-4 h-4" /></button>
+          
+          <select 
+            value={displayType}
+            onChange={e => setDisplayType(e.target.value as any)}
+            className="text-xs border border-border rounded px-2 py-1 bg-white outline-none"
+          >
+            <option value="overlay">Display Type: Time with Schedule Overlay</option>
+            <option value="calendar_only">Display Type: Calendar Only</option>
           </select>
+          
           <Link
-            to="/timesheet"
+            to={`/timesheet/${weekStart}`}
             className="flex items-center gap-1.5 bg-blue-600 text-white px-3 py-1.5 rounded text-xs font-bold uppercase tracking-wide hover:bg-blue-700 transition-colors"
           >
             OPEN TIME SHEET
           </Link>
         </div>
         <div className="flex items-center gap-2">
-          <select className="text-xs border border-border rounded px-2 py-1 bg-white outline-none">
-            <option>View: Calendar Only</option>
-            <option>View: With Details</option>
+          <select 
+            value={viewDetails}
+            onChange={e => setViewDetails(e.target.value as any)}
+            className="text-xs border border-border rounded px-2 py-1 bg-white outline-none"
+          >
+            <option value="calendar_only">View: Calendar Only</option>
+            <option value="with_details">View: With Details</option>
           </select>
-          <select className="text-xs border border-border rounded px-2 py-1 bg-white outline-none">
-            <option>Refresh: None</option>
-            <option>Refresh: 30s</option>
-            <option>Refresh: 60s</option>
+          
+          <select 
+            value={refreshInterval}
+            onChange={e => setRefreshInterval(Number(e.target.value))}
+            className="text-xs border border-border rounded px-2 py-1 bg-white outline-none"
+          >
+            <option value={0}>Refresh: None</option>
+            <option value={30000}>Refresh: 30s</option>
+            <option value={60000}>Refresh: 60s</option>
           </select>
+          
           <button className="p-1.5 hover:bg-muted rounded transition-colors"><HelpCircle className="w-4 h-4 text-muted-foreground" /></button>
         </div>
       </div>
@@ -409,13 +609,18 @@ export function Calendar() {
       {/* ═══ DATE NAVIGATOR ═══ */}
       <div className="bg-white border-b border-border px-4 py-2 flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2">
-          <button onClick={() => setWeekOffset(w => w - 1)} className="p-1 hover:bg-muted rounded"><ChevronLeft className="w-4 h-4" /></button>
+          <button onClick={goPrevious} className="p-1 hover:bg-muted rounded"><ChevronLeft className="w-4 h-4" /></button>
           <div className="flex items-center gap-1 text-sm font-medium">
             <CalendarDays className="w-4 h-4 text-muted-foreground" />
-            {new Date(weekStart).toLocaleDateString("en-US", { month: "short", day: "numeric" })} -{" "}
-            {new Date(weekEnd).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+            {weekStart === "—" ? "—" : (
+              weekStart === weekEnd ? (
+                new Date(weekStart).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+              ) : (
+                `${new Date(weekStart).toLocaleDateString("en-US", { month: "short", day: "numeric" })} - ${weekEnd === "—" ? "—" : new Date(weekEnd).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`
+              )
+            )}
           </div>
-          <button onClick={() => setWeekOffset(w => w + 1)} className="p-1 hover:bg-muted rounded"><ChevronRight className="w-4 h-4" /></button>
+          <button onClick={goNext} className="p-1 hover:bg-muted rounded"><ChevronRight className="w-4 h-4" /></button>
 
           <button onClick={goToday} className="bg-blue-600 text-white text-xs font-bold px-3 py-1 rounded-full hover:bg-blue-700 transition-colors ml-2">
             TODAY
@@ -423,7 +628,19 @@ export function Calendar() {
 
           <div className="flex items-center gap-1 ml-3 text-sm">
             <User className="w-4 h-4 text-muted-foreground" />
-            <span>{profile?.name || "User"}</span>
+            {users.length > 0 ? (
+              <select
+                value={selectedUserId || user?.uid}
+                onChange={e => setSelectedUserId(e.target.value)}
+                className="bg-transparent border-none outline-none text-sm cursor-pointer font-medium"
+              >
+                {users.map(u => (
+                  <option key={u.uid} value={u.uid}>{u.name || u.email || u.uid}</option>
+                ))}
+              </select>
+            ) : (
+              <span>{profile?.name || "User"}</span>
+            )}
           </div>
         </div>
 
@@ -487,7 +704,7 @@ export function Calendar() {
             </button>
           </div>
           {/* Hour labels */}
-          {HOURS.map(h => (
+          {displayType === "overlay" && HOURS.map(h => (
             <div key={h} className="border-b border-border flex items-start justify-end pr-2 pt-1 text-[10px] text-muted-foreground font-medium" style={{ height: `${HOUR_HEIGHT}px` }}>
               {h}
             </div>
@@ -500,7 +717,7 @@ export function Calendar() {
 
         {/* Day Columns */}
         {weekDays.map((day, dayIdx) => {
-          const stats = dayStats[day.date];
+          const stats = dayStats[day.date] || { logged: 0, cards: [] };
           const utilPct = capacityPerDay > 0 ? Math.round((stats.logged / capacityPerDay) * 100) : 0;
           const remaining = Math.max(0, capacityPerDay - stats.logged);
           const overtime = Math.max(0, stats.logged - capacityPerDay);
@@ -529,35 +746,35 @@ export function Calendar() {
               </div>
 
               {/* Hour Grid with Events */}
-              <div className="relative">
+              <div className={displayType === "overlay" ? "relative" : "p-1 space-y-1"}>
                 {/* Background hour lines */}
-                {HOURS.map(h => (
+                {displayType === "overlay" && HOURS.map(h => (
                   <div key={h} className="border-b border-border/50" style={{ height: `${HOUR_HEIGHT}px` }} />
                 ))}
 
                 {/* Event blocks */}
                 {events.map(({ card, col, totalCols, style }, idx) => {
-                  const width = totalCols > 1 ? `${100 / totalCols}%` : "100%";
-                  const left = totalCols > 1 ? `${(col / totalCols) * 100}%` : "0";
+                  const width = displayType === "overlay" ? (totalCols > 1 ? `${100 / totalCols}%` : "100%") : "100%";
+                  const left = displayType === "overlay" ? (totalCols > 1 ? `${(col / totalCols) * 100}%` : "0") : "0";
                   const borderColor = getEventColor(idx);
 
                   return (
                     <div
                       key={card.id}
-                      className="absolute px-0.5 cursor-pointer group"
-                      style={{ ...style, width, left, zIndex: 10 + col }}
+                      className={displayType === "overlay" ? "absolute px-0.5 cursor-pointer group" : "cursor-pointer group"}
+                      style={displayType === "overlay" ? { ...style, width, left, zIndex: 10 + col } : {}}
                       onClick={() => openEditPanel(card)}
                     >
                       <div
-                        className="h-full rounded-sm border border-border bg-white shadow-sm overflow-hidden flex hover:shadow-md transition-shadow"
+                        className="rounded-sm border border-border bg-white shadow-sm overflow-hidden flex hover:shadow-md transition-shadow py-1 min-h-[36px]"
                         style={{ borderLeft: `3px solid ${borderColor}` }}
                       >
-                        <div className="flex-grow px-1.5 py-1 overflow-hidden">
+                        <div className="flex-grow px-1.5 overflow-hidden">
                           <div className="flex items-center gap-1">
                             <Clock className="w-2.5 h-2.5 text-muted-foreground flex-shrink-0" />
                             <span className="text-[10px] font-bold truncate">({card.hours_worked}m) {card.short_description || card.task || card.work_type || "Entry"}</span>
                           </div>
-                          {card.description && (
+                          {viewDetails === "with_details" && card.description && (
                             <div className="text-[9px] text-muted-foreground truncate mt-0.5">{card.description}</div>
                           )}
                         </div>
@@ -595,7 +812,7 @@ export function Calendar() {
             <div className="flex items-center justify-between p-4 border-b border-border bg-muted/10">
               <div className="flex items-center gap-2">
                 <FileText className="w-5 h-5 text-blue-600" />
-                <h3 className="font-bold text-sm">Edit Time Entry</h3>
+                <h3 className="font-bold text-sm">{editPanel.id ? "Edit Time Entry" : "New Time Entry"}</h3>
               </div>
               <button onClick={() => setEditPanel(null)} className="p-1 hover:bg-muted rounded"><X className="w-5 h-5" /></button>
             </div>
@@ -652,7 +869,11 @@ export function Calendar() {
 
             {/* Panel Footer */}
             <div className="p-4 border-t border-border flex items-center justify-between bg-muted/10">
-              <button onClick={deleteFromPanel} className="flex items-center gap-1 text-xs text-red-500 hover:text-red-700 font-medium">
+              <button 
+                onClick={deleteFromPanel} 
+                disabled={!editPanel.id}
+                className="flex items-center gap-1 text-xs text-red-500 hover:text-red-700 font-medium disabled:opacity-30 disabled:pointer-events-none"
+              >
                 <Trash2 className="w-3.5 h-3.5" /> Delete
               </button>
               <div className="flex items-center gap-2">

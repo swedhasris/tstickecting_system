@@ -307,6 +307,35 @@ export function TicketDetail() {
 
       await updateDoc(ticketRef, finalUpdates);
 
+      // Dispatch real-time notification
+      try {
+        fetch("/api/notifications/dispatch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ticket: {
+              id: id,
+              ticket_number: ticket.number,
+              created_by: ticket.createdBy,
+              created_by_name: ticket.createdByName || ticket.caller,
+              assigned_to: finalUpdates.assignedTo !== undefined ? finalUpdates.assignedTo : ticket.assignedTo,
+              assigned_to_name: finalUpdates.assignedToName !== undefined ? finalUpdates.assignedToName : ticket.assignedToName,
+              status: finalUpdates.status !== undefined ? finalUpdates.status : ticket.status,
+              priority: finalUpdates.priority !== undefined ? finalUpdates.priority : ticket.priority
+            },
+            actorId: user.uid,
+            actorName: profile?.name || user.email,
+            type: "update",
+            oldStatus: ticket.status,
+            newStatus: finalUpdates.status !== undefined ? finalUpdates.status : ticket.status,
+            oldAssignee: ticket.assignedTo,
+            newAssignee: finalUpdates.assignedTo !== undefined ? finalUpdates.assignedTo : ticket.assignedTo
+          })
+        });
+      } catch (e) {
+        console.error("Failed to dispatch update notification:", e);
+      }
+
       // Log status change and other field changes to activity timeline
       if (fieldChanges.length > 0) {
         try {

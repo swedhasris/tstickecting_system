@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { ROLE_HIERARCHY } from "../lib/roles";
-import { ShieldAlert, CheckCircle, XCircle, RotateCcw, Eye, X } from "lucide-react";
+import { ShieldAlert, CheckCircle, XCircle, RotateCcw, Eye, X, Download, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn, formatDate } from "@/lib/utils";
 
@@ -106,17 +106,60 @@ export function TimesheetApprovals() {
     } catch (e) { console.error(e); }
   };
 
-  const handleScreenshotApproval = async (actId: string, status: string) => {
+  const handleDownloadCSV = () => {
+    const filteredTs = timesheets.filter(ts =>
+      statusFilter === "all" ? true : ts.status === statusFilter
+    );
+
+    const headers = ["Employee Name", "Employee Email", "Week Start", "Week End", "Total Minutes", "Status", "Submitted At"];
+    const rows = filteredTs.map(ts => {
+      const user = users[ts.user_id] || {};
+      const name = user.name || "Unknown";
+      const email = user.email || "";
+      const weekStart = ts.week_start?.substring?.(0, 10) || "—";
+      const weekEnd = ts.week_end?.substring?.(0, 10) || "—";
+      const totalMin = (parseFloat(ts.total_hours) || 0).toFixed(0);
+      const status = ts.status || "Draft";
+      const submitted = ts.submitted_at ? new Date(ts.submitted_at).toLocaleString() : "—";
+
+      return [
+        `"${name.replace(/"/g, '""')}"`,
+        `"${email.replace(/"/g, '""')}"`,
+        `"${weekStart.replace(/"/g, '""')}"`,
+        `"${weekEnd.replace(/"/g, '""')}"`,
+        totalMin,
+        `"${status.replace(/"/g, '""')}"`,
+        `"${submitted.replace(/"/g, '""')}"`
+      ].join(",");
+    });
+
+    const csvContent = [headers.join(","), ...rows].join("\r\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `ticket_approvals_${statusFilter}_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.style.visibility = "hidden";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleDelete = async (tsId: string) => {
+    if (!confirm("Are you sure you want to delete this ticket/timesheet? This will also delete all associated time entries.")) return;
     try {
-      const res = await fetch(`/api/activity-entries/${actId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ approval_status: status, approved_by: profile?.name || 'Admin' })
+      const res = await fetch(`/api/timesheets/${tsId}`, {
+        method: "DELETE"
       });
       if (res.ok) {
-        setViewActivities(prev => prev.map(a => a.id === actId ? { ...a, approval_status: status, approved_by: profile?.name || 'Admin' } : a));
+        loadData();
+      } else {
+        alert("Failed to delete timesheet.");
       }
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      alert("Error deleting timesheet.");
+    }
   };
 
   const handleReopen = async (tsId: string) => {
@@ -158,14 +201,23 @@ export function TimesheetApprovals() {
           <h1 className="text-2xl font-bold text-sn-dark">Ticket Approvals</h1>
           <p className="text-sm text-muted-foreground">Review and approve employee tickets</p>
         </div>
-        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-          className="p-2 border border-border rounded text-sm outline-none focus:ring-1 focus:ring-sn-green">
-          <option value="Submitted">Submitted</option>
-          <option value="Approved">Approved</option>
-          <option value="Rejected">Rejected</option>
-          <option value="Draft">Draft</option>
-          <option value="all">All</option>
-        </select>
+        <div className="flex items-center gap-3">
+          <Button
+            onClick={handleDownloadCSV}
+            variant="outline"
+            className="flex items-center gap-2 border border-border hover:bg-muted font-medium text-sm rounded p-2"
+          >
+            <Download className="w-4 h-4" /> Download CSV
+          </Button>
+          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+            className="p-2 border border-border rounded text-sm outline-none focus:ring-1 focus:ring-sn-green">
+            <option value="Submitted">Submitted</option>
+            <option value="Approved">Approved</option>
+            <option value="Rejected">Rejected</option>
+            <option value="Draft">Draft</option>
+            <option value="all">All</option>
+          </select>
+        </div>
       </div>
 
       {/* Stats */}
@@ -249,6 +301,10 @@ export function TimesheetApprovals() {
                             <RotateCcw className="w-3.5 h-3.5" />
                           </button>
                         )}
+                        <button onClick={() => handleDelete(ts.id)} title="Delete"
+                          className="p-1.5 bg-red-50 border border-red-200 rounded hover:bg-red-100 text-red-600 hover:text-red-700 transition-colors">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -331,41 +387,16 @@ export function TimesheetApprovals() {
                   {viewActivities.length === 0 ? (
                     <div className="p-8 text-center text-muted-foreground text-sm italic">No screenshots or AI activity recorded for this period.</div>
                   ) : viewActivities.map((act, i) => (
-                    <div key={act.id || i} className={cn("bg-muted/10 border rounded-lg overflow-hidden transition-colors", 
-                      act.approval_status === 'Approved' ? 'border-green-300 bg-green-50/50' : 
-                      act.approval_status === 'Rejected' ? 'border-red-300 bg-red-50/50' : 'border-border')}>
-                      <div className={cn("flex items-center justify-between p-2 border-b",
-                        act.approval_status === 'Approved' ? 'bg-green-100/50 border-green-200' : 
-                        act.approval_status === 'Rejected' ? 'bg-red-100/50 border-red-200' : 'bg-muted/20 border-border')}>
+                    <div key={act.id || i} className="bg-muted/10 border border-border rounded-lg overflow-hidden transition-colors">
+                      <div className="flex items-center justify-between p-2 border-b bg-muted/20 border-border">
                         <div className="flex items-center gap-2">
                           <span className="text-[10px] font-bold px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded uppercase">{act.activity_label || "Active"}</span>
                           <span className="text-[10px] text-muted-foreground font-mono">{new Date(act.captured_at).toLocaleString()}</span>
-                          {act.approval_status !== 'Pending' && (
-                            <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded uppercase ml-2",
-                              act.approval_status === 'Approved' ? 'bg-green-200 text-green-800' : 'bg-red-200 text-red-800')}>
-                              {act.approval_status}
-                            </span>
-                          )}
                         </div>
                         <div className="flex items-center gap-4">
                           <div className="text-[10px] text-muted-foreground">
                             {act.keystrokes} Keys · {act.clicks} Clicks
                           </div>
-                          {act.approval_status === 'Pending' && (
-                            <div className="flex gap-1">
-                              <button onClick={() => handleScreenshotApproval(act.id, 'Approved')} className="p-1 text-green-600 hover:bg-green-100 rounded" title="Approve">
-                                <CheckCircle className="w-4 h-4" />
-                              </button>
-                              <button onClick={() => handleScreenshotApproval(act.id, 'Rejected')} className="p-1 text-red-600 hover:bg-red-100 rounded" title="Reject">
-                                <XCircle className="w-4 h-4" />
-                              </button>
-                            </div>
-                          )}
-                          {act.approval_status !== 'Pending' && (
-                            <button onClick={() => handleScreenshotApproval(act.id, 'Pending')} className="text-[10px] text-muted-foreground hover:underline ml-2">
-                              Undo
-                            </button>
-                          )}
                         </div>
                       </div>
                       <div className="flex gap-4 p-3">
@@ -386,9 +417,6 @@ export function TimesheetApprovals() {
                                <div className="w-1.5 h-1.5 rounded-full bg-green-500"></div>
                                <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider">AI Verified • {Math.round(act.confidence * 100 || 90)}% Confidence</span>
                             </div>
-                            {act.approved_by && act.approval_status !== 'Pending' && (
-                              <span className="text-[9px] text-muted-foreground">by {act.approved_by}</span>
-                            )}
                           </div>
                         </div>
                       </div>

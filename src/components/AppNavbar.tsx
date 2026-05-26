@@ -9,11 +9,34 @@ function fmtHMS(s: number) {
   return [h, m, sec].map(v => String(v).padStart(2, '0')).join(':');
 }
 
+function formatTimeAgo(dateString: string) {
+  if (!dateString) return 'some time ago';
+  try {
+    const now = new Date();
+    const date = new Date(dateString);
+    const seconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+    
+    if (seconds < 0) return 'just now';
+    if (seconds < 60) return 'just now';
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes} min ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours} hr${hours > 1 ? 's' : ''} ago`;
+    const days = Math.floor(hours / 24);
+    return `${days} day${days > 1 ? 's' : ''} ago`;
+  } catch (e) {
+    return 'some time ago';
+  }
+}
+
 export function AppNavbar() {
   const { user, profile } = useAuth();
   const { theme, setTheme, resolvedTheme } = useTheme();
   const { status, elapsed, startWatcher, stopWatcher } = useActivityTracker();
   const [notificationCount, setNotificationCount] = React.useState(0);
+  const [notifications, setNotifications] = React.useState<any[]>([]);
+  const [isOpen, setIsOpen] = React.useState(false);
+  const dropdownRef = React.useRef<HTMLDivElement>(null);
 
   const isActive = status === 'active';
 
@@ -23,27 +46,96 @@ export function AppNavbar() {
 
     let disposed = false;
 
-    const loadCount = async () => {
+    // Load initial count and notifications list
+    const loadData = async () => {
       try {
-        const res = await fetch(`/api/notifications/unread-count?user_id=${encodeURIComponent(uid)}`);
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!disposed) {
-          setNotificationCount(Number(data.count || 0));
+        // Count
+        const countRes = await fetch(`/api/notifications/unread-count?user_id=${encodeURIComponent(uid)}`);
+        if (countRes.ok) {
+          const countData = await countRes.json();
+          if (!disposed) setNotificationCount(Number(countData.count || 0));
         }
-      } catch {
-        // keep navbar quiet if notifications are unavailable
+
+        // List
+        const listRes = await fetch(`/api/notifications/list?user_id=${encodeURIComponent(uid)}`);
+        if (listRes.ok) {
+          const listData = await listRes.json();
+          if (!disposed) setNotifications(listData);
+        }
+      } catch (err) {
+        console.error("Failed to load notifications:", err);
       }
     };
 
-    loadCount();
-    const timer = setInterval(loadCount, 30000);
+    loadData();
+
+    // Establish SSE stream for real-time notifications
+    const eventSource = new EventSource(`/api/notifications/stream?user_id=${encodeURIComponent(uid)}`);
+
+    eventSource.onmessage = (event) => {
+      try {
+        const notif = JSON.parse(event.data);
+        if (disposed) return;
+        
+        // Add to notifications list
+        setNotifications(prev => [notif, ...prev.slice(0, 49)]);
+        
+        // Increment unread count
+        setNotificationCount(prev => prev + 1);
+      } catch (err) {
+        console.error("SSE parse error:", err);
+      }
+    };
+
+    eventSource.onerror = (err) => {
+      console.warn("SSE connection error, closing EventSource:", err);
+      eventSource.close();
+    };
 
     return () => {
       disposed = true;
-      clearInterval(timer);
+      eventSource.close();
     };
   }, [user?.uid, profile?.uid]);
+
+  // Click outside to close dropdown
+  React.useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    if (isOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isOpen]);
+
+  const handleToggleOpen = async () => {
+    const nextOpen = !isOpen;
+    setIsOpen(nextOpen);
+
+    if (nextOpen) {
+      const uid = user?.uid || profile?.uid;
+      if (!uid) return;
+
+      // Mark all as read
+      try {
+        await fetch("/api/notifications/mark-read", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_id: uid })
+        });
+        
+        setNotificationCount(0);
+        setNotifications(prev => prev.map(n => ({ ...n, is_read: 1 })));
+      } catch (err) {
+        console.error("Failed to mark notifications as read:", err);
+      }
+    }
+  };
 
   return (
     <header className="h-16 bg-background border-b border-border flex items-center justify-between px-8 sticky top-0 z-10">
@@ -120,19 +212,90 @@ export function AppNavbar() {
           </button>
         </div>
 
-        <button
-          className="relative text-muted-foreground hover:text-foreground transition-colors"
-          title={notificationCount > 0 ? `${notificationCount} unread notifications` : "Notifications"}
-        >
-          <Bell className="w-5 h-5" />
-          {notificationCount > 0 ? (
-            <span className="absolute -top-2 -right-2 min-w-[18px] h-[18px] px-1 bg-destructive text-white rounded-full text-[10px] font-bold flex items-center justify-center leading-none">
-              {notificationCount > 99 ? '99+' : notificationCount}
-            </span>
-          ) : (
-            <span className="absolute -top-1 -right-1 w-2 h-2 bg-destructive rounded-full opacity-60" />
+        {/* Notifications Bell with beautiful interactive dropdown */}
+        <div className="relative" ref={dropdownRef}>
+          <button
+            onClick={handleToggleOpen}
+            className="relative text-muted-foreground hover:text-foreground transition-colors p-1"
+            title={notificationCount > 0 ? `${notificationCount} unread notifications` : "Notifications"}
+          >
+            <Bell className="w-5 h-5" />
+            {notificationCount > 0 ? (
+              <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 bg-destructive text-white rounded-full text-[10px] font-bold flex items-center justify-center leading-none">
+                {notificationCount > 99 ? '99+' : notificationCount}
+              </span>
+            ) : null}
+          </button>
+          
+          {isOpen && (
+            <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white border border-border rounded-xl shadow-xl overflow-hidden z-50 animate-in fade-in slide-in-from-top-1 duration-200">
+              {/* Header */}
+              <div className="px-4 py-3 border-b border-border bg-gradient-to-r from-sn-dark to-gray-800 text-white flex items-center justify-between">
+                <span className="font-bold text-sm">Notifications</span>
+                {notifications.length > 0 && (
+                  <span className="text-[10px] text-sn-green bg-sn-green/10 px-2 py-0.5 rounded-full font-bold">
+                    {notifications.filter(n => !n.is_read).length} Unread
+                  </span>
+                )}
+              </div>
+
+              {/* List */}
+              <div className="max-h-96 overflow-y-auto divide-y divide-border custom-scrollbar">
+                {notifications.length === 0 ? (
+                  <div className="p-8 text-center text-muted-foreground text-xs">
+                    No notifications yet.
+                  </div>
+                ) : (
+                  notifications.map(notif => {
+                    const initials = (notif.actor_name || "S")[0].toUpperCase();
+                    const timeAgo = formatTimeAgo(notif.created_at);
+                    const isUnread = !notif.is_read;
+
+                    return (
+                      <div 
+                        key={notif.id} 
+                        className={`p-4 flex items-start gap-3 hover:bg-muted/30 transition-colors ${
+                          isUnread ? 'bg-sn-green/5' : ''
+                        }`}
+                      >
+                        {/* Avatar */}
+                        <div className="w-8 h-8 rounded-full bg-sn-dark text-sn-green text-xs font-bold flex items-center justify-center flex-shrink-0 border border-sn-green/20">
+                          {initials}
+                        </div>
+
+                        {/* Content */}
+                        <div className="flex-grow min-w-0">
+                          <p className="text-xs text-foreground font-medium leading-relaxed break-words">
+                            {notif.message}
+                          </p>
+                          
+                          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                            {notif.ticket_number && (
+                              <a 
+                                href={`/tickets/${notif.ticket_id}`}
+                                className="text-[9.5px] font-mono font-bold bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded hover:underline"
+                              >
+                                {notif.ticket_number}
+                              </a>
+                            )}
+                            <span className="text-[10px] text-muted-foreground">
+                              {timeAgo}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Unread indicator dot */}
+                        {isUnread && (
+                          <span className="w-2 h-2 bg-destructive rounded-full flex-shrink-0 mt-1.5" />
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
           )}
-        </button>
+        </div>
         
         <div className="flex items-center gap-3 pl-6 border-l border-border">
           <div className="text-right hidden sm:block">

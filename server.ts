@@ -209,6 +209,25 @@ async function getSQLiteDb() {
       await sqliteDb.exec("ALTER TABLE activity_entries ADD COLUMN clicks INTEGER DEFAULT 0");
     } catch (e) {}
     
+    try {
+      await sqliteDb.exec(`
+        CREATE TABLE IF NOT EXISTS notifications (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id TEXT NOT NULL,
+          message TEXT NOT NULL,
+          ticket_id TEXT,
+          ticket_number TEXT,
+          actor_id TEXT,
+          actor_name TEXT,
+          is_read INTEGER DEFAULT 0,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+      console.log('[SQLite] Notifications table initialized');
+    } catch (e: any) {
+      console.error('[SQLite] Failed to initialize notifications table:', e.message);
+    }
+    
     console.log('[SQLite] Timesheet database initialized');
   }
   return sqliteDb;
@@ -586,13 +605,194 @@ async function startServer() {
           INDEX idx_captured (captured_at)
         ) ENGINE=InnoDB
       `);
+      
+      await execute(`
+        CREATE TABLE IF NOT EXISTS notifications (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          user_id VARCHAR(128) NOT NULL,
+          message TEXT NOT NULL,
+          ticket_id VARCHAR(128),
+          ticket_number VARCHAR(50),
+          actor_id VARCHAR(128),
+          actor_name VARCHAR(255),
+          is_read TINYINT DEFAULT 0,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          INDEX idx_notif_user (user_id),
+          INDEX idx_notif_read (is_read)
+        ) ENGINE=InnoDB
+      `);
+      console.log('[MySQL] Notifications table initialized');
       console.log('[MySQL] Activity tracker tables initialized');
     } catch (e: any) {
-      console.error('[MySQL] Failed to initialize timesheet tables:', e.message);
+      console.error('[MySQL] Failed to initialize timesheet/notifications tables:', e.message);
+    }
+  }
+
+  // ═══ REAL-TIME NOTIFICATION SYSTEM ═══
+  let sseClients: { userId: string; res: any }[] = [];
+
+  function sendNotificationToUser(userId: string, notif: any) {
+    const clients = sseClients.filter(c => c.userId === userId);
+    clients.forEach(c => {
+      try {
+        c.res.write(`data: ${JSON.stringify(notif)}\n\n`);
+      } catch (err) {
+        console.error(`[SSE] Write error for user ${userId}:`, err);
+      }
+    });
+  }
+
+  async function dispatchNotifications(ticket: any, actorId: string, actorName: string, message: string) {
+    try {
+      // 1. Fetch all users from database to check their roles
+      const allUsers = await query("SELECT uid, name, role FROM users");
+      
+      // 2. Identify roles of ticket creator and assignee
+      const creatorUser = allUsers.find(u => u.uid === ticket.created_by);
+      const assigneeUser = allUsers.find(u => u.uid === ticket.assigned_to);
+      const creatorRole = creatorUser?.role || 'user';
+      const assigneeRole = assigneeUser?.role || 'user';
+
+      const isCreatorManaged = creatorRole === 'user' || creatorRole === 'agent';
+      const isAssigneeManaged = assigneeRole === 'user' || assigneeRole === 'agent';
+
+      // 3. Filter audience based on the role requirements
+      const eligibleRecipients = allUsers.filter(user => {
+        // Super Admin / Ultra Super Admin: Receive all notifications
+        if (user.role === 'super_admin' || user.role === 'ultra_super_admin') {
+          return true;
+        }
+        // Admin: Receive all notifications (tickets under control)
+        if (user.role === 'admin') {
+          return true;
+        }
+        // Sub Admin: Receive notifications related to their managed users (user & agent)
+        if (user.role === 'sub_admin') {
+          return isCreatorManaged || isAssigneeManaged;
+        }
+        // Agent: Receive assigned ticket notifications
+        if (user.role === 'agent') {
+          return ticket.assigned_to === user.uid;
+        }
+        // User: Receive notifications only for tickets created by them or assigned to them
+        if (user.role === 'user') {
+          return ticket.created_by === user.uid || ticket.assigned_to === user.uid;
+        }
+        return false;
+      });
+
+      // 4. Save notification to database and broadcast to live SSE streams
+      for (const recipient of eligibleRecipients) {
+        const result = await execute(
+          `INSERT INTO notifications (user_id, message, ticket_id, ticket_number, actor_id, actor_name, is_read)
+           VALUES (?, ?, ?, ?, ?, ?, 0)`,
+          [recipient.uid, message, ticket.id.toString(), ticket.ticket_number, actorId, actorName]
+        );
+
+        const newNotif = {
+          id: result.insertId.toString(),
+          user_id: recipient.uid,
+          message,
+          ticket_id: ticket.id.toString(),
+          ticket_number: ticket.ticket_number,
+          actor_id: actorId,
+          actor_name: actorName,
+          is_read: 0,
+          created_at: new Date().toISOString()
+        };
+
+        sendNotificationToUser(recipient.uid, newNotif);
+      }
+    } catch (err: any) {
+      console.error("[Notifications Dispatcher] Error:", err.message);
     }
   }
 
   // API Routes
+  app.get("/api/notifications/unread-count", async (req, res) => {
+    try {
+      const userId = req.query.user_id as string;
+      if (!userId) return res.status(400).json({ error: "Missing user_id" });
+      const result = await query("SELECT COUNT(*) as count FROM notifications WHERE user_id = ? AND is_read = 0", [userId]);
+      res.json({ count: result[0]?.count || 0 });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/notifications/list", async (req, res) => {
+    try {
+      const userId = req.query.user_id as string;
+      if (!userId) return res.status(400).json({ error: "Missing user_id" });
+      const rows = await query("SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50", [userId]);
+      res.json(rows.map(r => ({ id: r.id.toString(), ...r })));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/notifications/mark-read", async (req, res) => {
+    try {
+      const { user_id } = req.body;
+      if (!user_id) return res.status(400).json({ error: "Missing user_id" });
+      await execute("UPDATE notifications SET is_read = 1 WHERE user_id = ?", [user_id]);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/notifications/stream", (req, res) => {
+    const userId = req.query.user_id as string;
+    if (!userId) return res.status(400).send("Missing user_id");
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+
+    const client = { userId, res };
+    sseClients.push(client);
+
+    req.on("close", () => {
+      sseClients = sseClients.filter(c => c !== client);
+    });
+  });
+
+  app.post("/api/notifications/dispatch", async (req, res) => {
+    try {
+      const { ticket, actorId, actorName, type, oldStatus, newStatus, oldAssignee, newAssignee } = req.body;
+      if (!ticket) return res.status(400).json({ error: "Missing ticket data" });
+
+      let message = "";
+      if (type === "create") {
+        const creatorName = ticket.created_by_name || "System";
+        const assigneeName = ticket.assigned_to_name || "Unassigned";
+        message = `${creatorName} created a ticket and assigned it to ${assigneeName}`;
+      } else {
+        message = `${actorName} updated ticket #${ticket.ticket_number}`;
+        
+        if (newStatus && oldStatus && newStatus !== oldStatus) {
+          if (newStatus === "Resolved" || newStatus === "Closed") {
+            message = `${actorName} resolved ticket #${ticket.ticket_number}`;
+          } else {
+            message = `${actorName} changed ticket #${ticket.ticket_number} status from ${oldStatus} to ${newStatus}`;
+          }
+        } else if (newAssignee !== undefined && newAssignee !== oldAssignee) {
+          const creatorName = ticket.created_by_name || "System";
+          const assigneeName = ticket.assigned_to_name || "Unassigned";
+          message = `${creatorName} assigned ticket #${ticket.ticket_number} to ${assigneeName}`;
+        }
+      }
+
+      await dispatchNotifications(ticket, actorId, actorName, message);
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("[Notifications Dispatch Route] Error:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", database: "mysql" });
   });
@@ -791,6 +991,12 @@ async function startServer() {
       const tickets = await query("SELECT * FROM tickets WHERE id = ?", [ticketId]);
       const createdTicket = tickets[0];
 
+      // Dispatch real-time role-based notifications
+      const creatorName = createdTicket.created_by_name || createdTicket.caller || "System";
+      const assigneeName = createdTicket.assigned_to_name || "Unassigned";
+      const notifMsg = `${creatorName} created a ticket and assigned it to ${assigneeName}`;
+      dispatchNotifications(createdTicket, createdTicket.created_by || "System", creatorName, notifMsg);
+
       // Send auto-acknowledgement email if caller is an email address
       if (createdTicket.caller && createdTicket.caller.includes('@')) {
         try {
@@ -891,7 +1097,41 @@ async function startServer() {
 
       // Return updated ticket
       const updatedTickets = await query("SELECT * FROM tickets WHERE id = ?", [id]);
-      res.json({ id: id.toString(), ...updatedTickets[0], pointsAwarded: points });
+      const updatedTicket = updatedTickets[0];
+      
+      if (updatedTicket) {
+        const actorId = req.body.updatedById || "System";
+        const actorName = req.body.updatedBy || "System";
+
+        // 1. Check status change / resolution
+        if (req.body.status && req.body.status !== ticket.status) {
+          if (req.body.status === "Resolved" || req.body.status === "Closed") {
+            const notifMsg = `${actorName} resolved ticket #${ticket.ticket_number}`;
+            dispatchNotifications(updatedTicket, actorId, actorName, notifMsg);
+          } else {
+            const notifMsg = `${actorName} changed ticket #${ticket.ticket_number} status from ${ticket.status} to ${req.body.status}`;
+            dispatchNotifications(updatedTicket, actorId, actorName, notifMsg);
+          }
+        }
+        
+        // 2. Check assignment change
+        if (req.body.assignedTo !== undefined && req.body.assignedTo !== ticket.assigned_to) {
+          const creatorName = ticket.created_by_name || "System";
+          const assigneeName = req.body.assignedToName || "Unassigned";
+          const notifMsg = `${creatorName} assigned ticket #${ticket.ticket_number} to ${assigneeName}`;
+          dispatchNotifications(updatedTicket, actorId, actorName, notifMsg);
+        }
+
+        // 3. General update
+        const didStatusChange = req.body.status && req.body.status !== ticket.status;
+        const didAssigneeChange = req.body.assignedTo !== undefined && req.body.assignedTo !== ticket.assigned_to;
+        if (!didStatusChange && !didAssigneeChange) {
+          const notifMsg = `${actorName} updated ticket #${ticket.ticket_number}`;
+          dispatchNotifications(updatedTicket, actorId, actorName, notifMsg);
+        }
+      }
+
+      res.json({ id: id.toString(), ...updatedTicket, pointsAwarded: points });
 
     } catch (error: any) {
       console.error("Error updating ticket:", error);
@@ -1270,6 +1510,18 @@ async function startServer() {
     } catch (error: any) {
       console.error("Error updating timesheet:", error);
       res.status(500).json({ error: "Failed to update timesheet" });
+    }
+  });
+
+  app.delete("/api/timesheets/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      await execute("DELETE FROM time_cards WHERE timesheet_id = ?", [id]);
+      await execute("DELETE FROM timesheets WHERE id = ?", [id]);
+      res.json({ success: true, message: "Timesheet deleted successfully" });
+    } catch (error: any) {
+      console.error("Error deleting timesheet:", error);
+      res.status(500).json({ error: "Failed to delete timesheet" });
     }
   });
 

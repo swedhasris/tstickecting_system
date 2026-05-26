@@ -99,7 +99,7 @@ export function Sidebar() {
             { icon: Monitor, label: "AI Activity Tracker", path: "/activity-tracker" },
           ]
         : [
-            { icon: LayoutDashboard, label: "Incident Dashboard", path: "/" },
+            { icon: LayoutDashboard, label: "Personal Dashboard", path: "/" },
             { icon: Trophy, label: "Leaderboard", path: "/leaderboard" },
             { icon: CalendarDays, label: "Calendar", path: "/calendar" },
             { icon: Ticket, label: "My Tickets", path: "/timesheet" },
@@ -165,7 +165,7 @@ export function Sidebar() {
         { icon: Users, label: "Group Management", path: "/groups" },
         { icon: Settings2, label: "System Settings", path: "/settings" },
         { icon: CheckCircle2, label: "Approved Tickets", path: "/approved-tickets" },
-        { icon: ClipboardList, label: "Ticket Approvals", path: "/timesheet/approvals" },
+        { icon: ClipboardList, label: "Ticket Approvals", path: "/timesheet-approvals" },
         { icon: CheckCircle2, label: "Approved Timesheets", path: "/timesheet/reports?status=Approved" },
         { icon: Palette, label: "Branding", path: "/branding", superAdminOnly: true },
       ]
